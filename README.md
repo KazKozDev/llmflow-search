@@ -16,18 +16,7 @@ The agent intelligently explores information in various sources - Wikipedia, sea
 - Identifies and resolves inconsistencies between sources
 - Finds alternative wording for more efficient searches.
 
-The result is a coherent, validated answer based on multiple pieces of information gathered through a multi-step search.
-
-Works in multiple languages and allows you to bypass site restrictions to access the information you need.
-
-## Workflow
-
-The agent follows this process for query handling:
-1. **Interpretation**: Processing the query 
-2. **Planning**: Decomposing into search subtasks
-3. **Search**: Retrieving information from available sources
-4. **Analysis**: Processing collected data
-5. **Response generation**: Creating a comprehensive answer
+The result is a coherent, validated answer based on multiple pieces of information gathered through a multi-step search. Works in multiple languages and allows you to bypass site restrictions to access the information you need.
 
 ## Requirements
 
