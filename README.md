@@ -9,7 +9,7 @@ LLMFlow Search is an agent that finds accurate answers to complex questions usin
 
 The main advantage of the agent is that it refines the search queries itself. If the initial search yields incomplete or inaccurate results, LLMFlow automatically formulates additional queries to fill in the information gaps. It does not pester the user with additional questions, but adjusts the search strategy on its own.
 
-The agent intelligently explores information in various sources - Wikipedia, search engines and directly on websites. In doing so, it:
+The agent intelligently explores information in various sources - Wikipedia, DuckDuckGo and directly on websites. In doing so, it:
 
 - Determines which parts of the answer require additional verification
 - Automatically expands and narrows the search area
