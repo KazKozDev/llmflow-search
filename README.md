@@ -1,7 +1,6 @@
-# LLMFlow Search Agent
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/KazKozDev/LLMFlow-Search/main/assets/logo.png" alt="LLMFlow Search Logo" width="200"/>
+  <img src="https://github.com/user-attachments/assets/2fd25edf-32a3-42a2-a675-05fd6b3c5e6a" alt="LLMFlow Search Logo" width="650"/>
 </p>
 
 <h3 align="center">Deep research. Reliable results.</h3>
