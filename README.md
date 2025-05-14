@@ -47,16 +47,8 @@ The result is a coherent, validated answer based on multiple pieces of informati
 
 Start the application:
 ```bash
-python -m llmflow
+python __main__.py
 ```
-
-### Command Line Parameters
-
-- `--query`, `-q`: Search query
-- `--output`, `-o`: Path to save the report (default: report.md)
-- `--config`, `-c`: Path to configuration file
-- `--verbose`, `-v`: Detailed output for debugging
-- `--cache`, `-C`: Use result caching (default: True)
 
 ## Configuration
 
