@@ -112,24 +112,6 @@ LLMFlow Search Agent consists of the following main modules:
 4. **Report Generator**: Synthesizes information into comprehensive reports
 5. **LLM Service**: Provides interaction with OpenAI language models
 
-## Dependencies
-
-- Python 3.8+
-- OpenAI API
-- Requests
-- BeautifulSoup4
-- Tenacity
-- Markdownify
-- Langchain
-- Colorlog
-- Selenium (for enhanced web searches)
-- NumPy
-- Pandas
-- Fake-useragent
-- Requests-cache
-- Spacy
-- Langdetect
-
 ---
 
 If you like this project, please give it a star ⭐
