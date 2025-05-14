@@ -5,23 +5,20 @@
 
 <h3 align="center">Deep research. Reliable results.</h3>
 
-LLMFlow Search is an LLM agent that processes complex queries. It searches, analyzes and synthesizes information from multiple web sources, generating context-aware answers.
+LLMFlow Search is an agent that finds accurate answers to complex questions using an advanced search strategy.
 
-LLMFlow Search combines accurate results with comprehensive analysis. Ideal for researchers synthesizing findings, students exploring topics, professionals seeking authoritative answers, or anyone looking for more than just standard search results. Every response is based on verifiable sources—no hallucinations, just real content. It leverages OpenAI's powerful language models to analyze and synthesize information from multiple sources. It's designed for easy integration into multi-agent systems, where it gathers and synthesizes web content while other agents handle tasks like analysis or content creation.
+The main advantage of the agent is that it refines the search queries itself. If the initial search yields incomplete or inaccurate results, LLMFlow automatically formulates additional queries to fill in the information gaps. It does not pester the user with additional questions, but adjusts the search strategy on its own.
 
-## Features
+The agent intelligently explores information in various sources - Wikipedia, search engines and directly on websites. In doing so, it:
 
-- **Query Analysis**: Processes complex questions and breaks them down into searchable components
-- **Multi-Source Search**: Combines results from DuckDuckGo, Wikipedia, and direct web scraping
-- **Adaptive Planning**: Adjusts search strategies based on initial findings
-- **Comprehensive Reports**: Creates detailed reports with citations and sources
-- **Memory System**: Retains information for context-aware processing
-- **Multilingual Support**: Works with queries and content in multiple languages
-- **Result Caching**: Improves performance for similar queries
-- **Clarification Mechanism**: Handles ambiguous queries through refinement
-- **Feedback Integration**: Learns from user feedback to improve results
-- **Bypass Blocks**: Uses various strategies to access web resources
-- **Customizable Configuration**: Allows fine-tuning of search parameters and report generation
+- Determines which parts of the answer require additional verification
+- Automatically expands and narrows the search area
+- Identifies and resolves inconsistencies between sources
+- Finds alternative wording for more efficient searches.
+
+The result is a coherent, validated answer based on multiple pieces of information gathered through a multi-step search.
+
+Works in multiple languages and allows you to bypass site restrictions to access the information you need.
 
 ## Workflow
 
