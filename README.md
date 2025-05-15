@@ -5,18 +5,18 @@
 
 <h3 align="center">Deep research. Reliable results.</h3>
 
-LLMFlow Search is an agent that finds accurate answers to complex questions using an advanced search strategy.
+LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy.
 
-The main advantage of the agent is that it refines the search queries itself. If the initial search yields incomplete or inaccurate results, LLMFlow automatically formulates additional queries to fill in the information gaps. 
+It automatically refines queries: if the initial results are incomplete or inaccurate, the agent generates additional queries to fill in the gaps.
 
-The agent intelligently explores information in various sources - Wikipedia, DuckDuckGo and directly on websites. In doing so, it:
+The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. It:
 
-- Determines which parts of the answer require additional verification
-- Automatically expands and narrows the search area
-- Identifies and resolves inconsistencies between sources
-- Finds alternative wording for more efficient searches.
+- Identifies which parts need verification
+- Expands or narrows the search as needed
+- Detects and resolves contradictions
+- Chooses more precise wording
 
-The result is a coherent, validated answer based on multiple pieces of information gathered through a multi-step search. Works in multiple languages and allows you to bypass site restrictions to access the information you need.
+The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
 
 ## Requirements
 
