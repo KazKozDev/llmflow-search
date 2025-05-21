@@ -126,8 +126,6 @@ LLMFlow Search Agent consists of the following main modules:
 5. **Report Generator**: Synthesizes information into comprehensive reports
 6. **LLM Service**: Provides interaction with language models
 
-For more detailed documentation on the core components, see [core/README.md](core/README.md).
-
 ---
 
 If you like this project, please give it a star ⭐
