@@ -1,7 +1,7 @@
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/2fd25edf-32a3-42a2-a675-05fd6b3c5e6a" alt="LLMFlow Search Logo" width="550"/>
-</p>
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="550"/>
+</p>
 <h3 align="center">Deep research. Reliable results.</h3>
 
 LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy.
