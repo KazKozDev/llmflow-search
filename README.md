@@ -84,35 +84,6 @@ The system uses a `config.json` file for configuration. Example configuration:
 }
 ```
 
-## New Feature: Search Intent Analyzer
-
-The Search Intent Analyzer is a powerful new component that:
-
-1. **Analyzes user search intentions** across various categories:
-   - Factual queries
-   - Informational queries
-   - Navigational queries
-   - Transactional queries
-   - Educational queries
-   - Research queries
-   - Local queries
-   - Urgent queries
-   - Time-sensitive queries
-
-2. **Analyzes key aspects** of each query:
-   - Main entities (people, places, things, concepts)
-   - Expected content type (articles, videos, maps, images)
-   - Temporal context (relevance, historicity)
-   - Level of detail (basic/in-depth)
-   - Term specialization (general/specialized)
-   - Time sensitivity (relevance of current date/time)
-
-3. **Creates optimized queries** for:
-   - Google (used by DuckDuckGo search)
-   - Wikipedia
-
-This leads to more accurate search results and better report quality.
-
 ## Architecture
 
 LLMFlow Search Agent consists of the following main modules:
