@@ -4,7 +4,9 @@
 </p>
 <h3 align="center">Deep research. Reliable results.</h3>
 
-LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy. It automatically refines queries: if the initial results are incomplete or inaccurate, the agent generates additional queries to fill in the gaps. The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. It:
+LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy. It automatically refines queries: if the initial results are incomplete or inaccurate, the agent generates additional queries to fill in the gaps. 
+
+The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. It:
 
 - Identifies which parts need verification
 - Expands or narrows the search as needed
