@@ -16,13 +16,13 @@ The agent explores information from various sources — Wikipedia, DuckDuckGo, a
 
 The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
 
-![report](https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da)
-
 ## Requirements
 
 * Python 3.8+
 * LLM API key (supported providers in config.json)
 * Chrome/Chromium (for Selenium-based web searches)
+
+![report](https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da)
 
 ## Installation
 
