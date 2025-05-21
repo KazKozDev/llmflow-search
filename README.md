@@ -39,7 +39,8 @@ The result is a coherent, verified answer based on real data. It works in multip
 
 3. Set up environment variables:
    ```bash
-   cp .env.example .env
+   echo "# API Keys for LLM Providers
+   OPENAI_API_KEY=" > .env
    ```
    Edit the .env file, adding your LLM provider API key.
 
