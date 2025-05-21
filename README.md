@@ -89,11 +89,10 @@ The system uses a `config.json` file for configuration. Example configuration:
 LLMFlow Search Agent consists of the following main modules:
 
 1. **Planning Module**: Analyzes queries and creates a search plan
-2. **Search Intent Analyzer**: Optimizes queries for different search engines
-3. **Tools Module**: Provides tools for searching DuckDuckGo, Wikipedia, and web pages
-4. **Memory Module**: Stores and retrieves information for context-aware processing
-5. **Report Generator**: Synthesizes information into comprehensive reports
-6. **LLM Service**: Provides interaction with language models
+2. **Tools Module**: Provides tools for searching DuckDuckGo, Wikipedia, and web pages
+3. **Memory Module**: Stores and retrieves information for context-aware processing
+4. **Report Generator**: Synthesizes information into comprehensive reports
+5. **LLM Service**: Provides interaction with language models
 
 ---
 
