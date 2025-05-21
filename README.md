@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="490"/>
+  <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="500"/>
 </p>
 <h3 align="center">Deep Research. Transparent Results.</h3>
 
@@ -15,6 +15,8 @@ The agent explores information from various sources — Wikipedia, DuckDuckGo, a
 - **NEW**: Analyzes search intent to optimize queries
 
 The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
+
+![report](https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da)
 
 ## Requirements
 
