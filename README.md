@@ -22,7 +22,10 @@ The result is a coherent, verified answer based on real data. It works in multip
 * LLM API key (supported providers in config.json)
 * Chrome/Chromium (for Selenium-based web searches)
 
-![report](https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da)
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da" alt="report" style="width: 900px;">
+</p>
+
 >An example of a report compiled by a search agent
 
 ## Installation
