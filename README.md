@@ -51,13 +51,6 @@ Start the application:
 python main.py
 ```
 
-Additional options:
-```bash
-python main.py --verbose            # Enable verbose logging
-python main.py --disable-intent-analyzer  # Disable the Search Intent Analyzer
-python main.py --max-iterations 10  # Increase max search iterations
-```
-
 ## Configuration
 
 The system uses a `config.json` file for configuration. Example configuration:
