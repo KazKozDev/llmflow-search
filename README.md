@@ -2,7 +2,7 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="550"/>
 </p>
-<h3 align="center">Deep research. Reliable results.</h3>
+<h3 align="center">Deep Research. Transparent Results.</h3>
 
 LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy. It automatically refines queries: if the initial results are incomplete or inaccurate, the agent generates additional queries to fill in the gaps. 
 
