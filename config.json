@@ -1,0 +1,28 @@
+{
+    "llm": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "temperature": 0.2,
+        "max_tokens": 4096
+    },
+    "search": {
+        "max_results": 5,
+        "safe_search": true,
+        "parse_top_results": 3,
+        "use_selenium": true,
+        "use_cache": true
+    },
+    "memory": {
+        "path": "./memory",
+        "max_items": 100
+    },
+    "report": {
+        "output_file": "report.md",
+        "include_sources": true,
+        "max_source_length": 3000
+    },
+    "intent_analyzer": {
+        "enabled": true,
+        "cache_results": true
+    }
+}
