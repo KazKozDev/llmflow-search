@@ -8,11 +8,11 @@ LLMFlow Search is an agent that finds accurate answers to complex questions usin
 
 The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. It:
 
+- Analyzes search intent to optimize queries
 - Identifies which parts need verification
 - Expands or narrows the search as needed
 - Detects and resolves contradictions
 - Chooses more precise wording
-- **NEW**: Analyzes search intent to optimize queries
 
 The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
 
