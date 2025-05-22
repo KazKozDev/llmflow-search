@@ -16,7 +16,7 @@ The agent explores information from various sources — Wikipedia, DuckDuckGo, a
 
 The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
 
-## Requirements
+### Requirements
 
 * Python 3.8+
 * LLM API key (supported providers in config.json)
@@ -28,7 +28,7 @@ The result is a coherent, verified answer based on real data. It works in multip
 
 >An example of a report compiled by LLMFlow Search agent
 
-## Installation
+### Installation
 
 1. Clone the repository:
    ```bash
@@ -48,14 +48,14 @@ The result is a coherent, verified answer based on real data. It works in multip
    ```
    Edit the .env file, adding your LLM provider API key.
 
-## Execution
+### Execution
 
 Start the application:
 ```bash
 python main.py
 ```
 
-## Configuration
+### Configuration
 
 The system uses a `config.json` file for configuration. Example configuration:
 
@@ -90,7 +90,7 @@ The system uses a `config.json` file for configuration. Example configuration:
 }
 ```
 
-## Architecture
+### Architecture
 
 LLMFlow Search Agent consists of the following main modules:
 
