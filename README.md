@@ -12,7 +12,7 @@ The agent explores information from various sources — Wikipedia, DuckDuckGo, a
   <img src="https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da" alt="report" style="width: 800px;">
 </p>
 
->An example of a report compiled by LLMFlow Search agent
+>An example of a report compiled by LLMFlow Search agent. A query goes through several steps before creating a report:
 >- Analyzes search intent to optimize queries
 >- Identifies which parts need verification
 >- Expands or narrows the search as needed
