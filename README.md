@@ -13,16 +13,13 @@ The agent explores information from various sources — Wikipedia, DuckDuckGo, a
 </p>
 
 >An example of a report compiled by LLMFlow Search agent
-
-It:
-
-- Analyzes search intent to optimize queries
-- Identifies which parts need verification
-- Expands or narrows the search as needed
-- Detects and resolves contradictions
-- Chooses more precise wording
-
-The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
+>- Analyzes search intent to optimize queries
+>- Identifies which parts need verification
+>- Expands or narrows the search as needed
+>- Detects and resolves contradictions
+>- Chooses more precise wording
+>  
+>The result is a coherent, verified answer based on real data. It works in multiple languages and can bypass site restrictions.
 
 ### Requirements
 
