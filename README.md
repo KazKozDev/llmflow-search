@@ -6,13 +6,15 @@
 
 LLMFlow Search is an agent that finds accurate answers to complex questions using a smart search strategy. It automatically refines queries: if the initial results are incomplete or inaccurate, the agent generates additional queries to fill in the gaps. 
 
+The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. 
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da" alt="report" style="width: 800px;">
 </p>
 
 >An example of a report compiled by LLMFlow Search agent
 
-The agent explores information from various sources — Wikipedia, DuckDuckGo, and websites directly. It:
+It:
 
 - Analyzes search intent to optimize queries
 - Identifies which parts need verification
