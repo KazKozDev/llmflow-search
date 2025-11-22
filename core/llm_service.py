@@ -36,7 +36,7 @@ class LLMService:
         
         # Get API key from environment variables based on provider name
         self.api_key = os.getenv(f"{self.provider.upper()}_API_KEY")
-        if not self.api_key:
+        if not self.api_key and self.provider != "ollama":
             self.logger.warning(f"{self.provider.upper()}_API_KEY not set in environment variables")
         
         # Try to initialize the appropriate client based on provider
@@ -53,6 +53,13 @@ class LLMService:
                     self.client = Anthropic(api_key=self.api_key)
                 except ImportError:
                     self.logger.error("Anthropic package not installed. Run: pip install anthropic")
+                    raise
+            elif self.provider == "ollama":
+                try:
+                    import ollama
+                    self.client = ollama.Client(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+                except ImportError:
+                    self.logger.error("Ollama package not installed. Run: pip install ollama")
                     raise
             else:
                 # Try to dynamically import a module for this provider
@@ -97,8 +104,22 @@ class LLMService:
             return self._api_generate(prompt, system_message)
         elif self.provider == "anthropic":
             return self._anthropic_generate(prompt, system_message)
+        elif self.provider == "ollama":
+            return self._ollama_generate(prompt, system_message)
         else:
             return self._generic_generate(prompt, system_message)
+
+    async def generate_response_async(self, prompt, system_message=None):
+        """
+        Generate a response from the LLM asynchronously.
+        """
+        if self.provider == "ollama":
+            return await self._ollama_generate_async(prompt, system_message)
+        else:
+            # Fallback for other providers: run in executor
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.generate_response, prompt, system_message)
     
     def _chat_completion_generate(self, prompt, system_message=None):
         """Generate response using chat completion API."""
@@ -235,6 +256,77 @@ class LLMService:
             
         except Exception as e:
             self.logger.error(f"Error generating Anthropic response: {str(e)}")
+            raise
+
+    def _ollama_generate(self, prompt, system_message=None):
+        """Generate response using Ollama API."""
+        if not self.client:
+            raise ValueError("Ollama client not initialized")
+            
+        try:
+            self.logger.debug(f"Sending prompt to {self.model} via Ollama")
+            start_time = time.time()
+            
+            messages = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": prompt})
+            
+            response = self.client.chat(
+                model=self.model,
+                messages=messages,
+                options={
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens
+                }
+            )
+            
+            elapsed_time = time.time() - start_time
+            self.logger.debug(f"Ollama response received in {elapsed_time:.2f}s")
+            
+            return response['message']['content']
+            
+        except Exception as e:
+            self.logger.error(f"Error generating Ollama response: {str(e)}")
+            raise
+
+    async def _ollama_generate_async(self, prompt, system_message=None):
+        """Generate response using Ollama AsyncClient."""
+        try:
+            import ollama
+            # Create a new async client for each request or reuse if possible
+            # Note: ollama.AsyncClient is available in newer versions
+            client = ollama.AsyncClient(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+            
+            self.logger.debug(f"Sending async prompt to {self.model} via Ollama")
+            start_time = time.time()
+            
+            messages = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": prompt})
+            
+            response = await client.chat(
+                model=self.model,
+                messages=messages,
+                options={
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens
+                }
+            )
+            
+            elapsed_time = time.time() - start_time
+            self.logger.debug(f"Ollama async response received in {elapsed_time:.2f}s")
+            
+            return response['message']['content']
+            
+        except ImportError:
+            # Fallback to sync if AsyncClient not available or old version
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._ollama_generate, prompt, system_message)
+        except Exception as e:
+            self.logger.error(f"Error generating Ollama async response: {str(e)}")
             raise
     
     def _generic_generate(self, prompt, system_message=None):

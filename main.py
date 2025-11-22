@@ -4,9 +4,12 @@ LLMFlow Search Agent - Main Entry Point
 A production-ready agent that searches the web using DuckDuckGo and Wikipedia
 and creates comprehensive reports with sources.
 """
+import os
+# Suppress tokenizers parallelism warning BEFORE any imports
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import argparse
 import sys
-import os
 import logging
 import colorlog
 import json
@@ -166,7 +169,9 @@ def main():
     
     # API key environment variable name will be constructed based on provider
     api_key_env = f"{provider.upper()}_API_KEY"
-    if not os.getenv(api_key_env):
+    
+    # Skip API key check for Ollama
+    if provider != "ollama" and not os.getenv(api_key_env):
         print(f"Error: {api_key_env} environment variable not set.")
         print("Please set it in a .env file or in your environment.")
         return 1
@@ -203,8 +208,9 @@ def main():
     tools = ToolsModule(
         memory=memory,
         llm_service=llm_service,
+        config=config,
         max_results=config["search"]["max_results"],
-        safe_search=config["search"]["safe_search"],
+        safe_search=config["search"].get("safe_search", True),
         parse_top_results=config["search"]["parse_top_results"]
     )
     
@@ -220,7 +226,17 @@ def main():
     )
     
     logging.info(f"Processing query: {args.query}")
-    report = agent.process_query(args.query)
+    
+    # Run async process_query
+    import asyncio
+    try:
+        report = asyncio.run(agent.process_query(args.query))
+    except KeyboardInterrupt:
+        print("\nSearch interrupted by user.")
+        return 1
+    except Exception as e:
+        logging.error(f"Error during execution: {e}")
+        return 1
     
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write(report)

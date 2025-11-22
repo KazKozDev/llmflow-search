@@ -10,12 +10,13 @@
 LLMFlow Search Agent is an intelligent research assistant that finds accurate answers to complex questions using advanced search strategies. The agent automatically refines queries, explores multiple information sources, and generates comprehensive reports with proper academic citations.
 
 **Key Features:**
-- Search Intent Analyzer optimizes queries for different search engines
-- Multi-source search (DuckDuckGo, Wikipedia, web parsing)
-- Intelligent planning system with LLM-guided strategy
-- Academic-style report generation with numbered citations
-- Selenium-based web scraping with caching
-- Multiple LLM provider support (OpenAI, Anthropic, Gemini)
+- **Advanced Search Intent Analyzer**: Optimizes queries for different search engines
+- **Multi-Source Search**: 9 specialized tools including DuckDuckGo, Wikipedia, ArXiv, YouTube, PubMed, and more
+- **Intelligent Planning**: LLM-guided strategy with dynamic plan revision
+- **Real-Time Web UI**: WebSocket-based interface with live progress updates
+- **High Performance**: Async-first architecture, caching, and resource pooling (30-50x faster init)
+- **Robust Architecture**: LLM Gateway, Event Bus, and centralized configuration
+- **Observability**: Built-in metrics dashboard and background job system
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/d4f738a1-e27e-415a-b44f-1374219057da" alt="Sample Report" style="width: 800px;">
@@ -27,19 +28,26 @@ LLMFlow Search Agent is an intelligent research assistant that finds accurate an
 
 ### Prerequisites
 - Python 3.9+
-- Chrome/Chromium browser
-- LLM API key (OpenAI, Anthropic, or Google Gemini)
+- Chrome/Chromium browser (for Selenium)
+- LLM API key (OpenAI, Anthropic, Google Gemini, or local Ollama)
 
 ### Steps
 ```bash
 git clone https://github.com/KazKozDev/LLMFlow-Search.git
 cd LLMFlow-Search
 pip install -r requirements.txt
-echo "OPENAI_API_KEY=your_api_key_here" > .env
 ```
 
 ## Usage
 
+### Web Interface (Recommended)
+Start the web server with real-time UI:
+```bash
+python web_server.py
+```
+Open **http://localhost:8000** in your browser.
+
+### CLI Usage
 ```bash
 # Basic usage
 python main.py
@@ -52,16 +60,19 @@ python main.py --output report.md --verbose --max-iterations 10
 ```json
 {
     "llm": {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
+        "provider": "ollama",
+        "model": "qwen3:8b",
         "temperature": 0.2,
         "max_tokens": 4096
     },
     "search": {
         "max_results": 5,
         "parse_top_results": 3,
-        "use_selenium": true,
-        "use_cache": true
+        "use_selenium": true
+    },
+    "cache": {
+        "provider": "sqlite",
+        "ttl_seconds": 86400
     }
 }
 ```
@@ -74,41 +85,42 @@ python -m pytest
 
 # With coverage
 python -m pytest --cov=core --cov=tools
-
-# Verbose testing
-python main.py --verbose
 ```
 
 ## Architecture
 
 ### Core Components
 - **Agent Core**: Central coordinator managing information flow
-- **LLM Service**: Unified interface for multiple LLM providers (OpenAI, Anthropic, Gemini)
-- **Search Intent Analyzer**: Optimizes queries for different search engines
-- **Planning Module**: Creates comprehensive search strategies
-- **Memory Module**: Manages search context and results
-- **Report Generator**: Synthesizes information into academic-style reports
+- **LLM Gateway**: Centralized LLM access with caching, metrics, and fallback
+- **Agent Factory**: Manages lifecycle and shared resources (singleton pattern)
+- **Event Bus**: Real-time communication system for UI updates
+- **Memory Module**: Semantic search and context management
+- **Planning Module**: Creates and revises search strategies
 
 ### Search Tools
-- **DuckDuckGo Search**: Selenium-based scraping with anti-detection
-- **Wikipedia Tool**: Multi-language Wikipedia integration  
-- **Web Content Parser**: Intelligent content extraction from web pages
+- **General**: DuckDuckGo, SearXNG
+- **Academic/Books**: ArXiv, PubMed, Project Gutenberg
+- **Knowledge**: Wikipedia, Wayback Machine
+- **Media/Maps**: YouTube, OpenStreetMap
+
+### Monitoring & Admin
+The web interface includes an **Admin Panel** (`/admin`) featuring:
+- **System Metrics**: Cache hit rates, LLM latency, error rates
+- **Background Jobs**: Queue management for long-running searches
 
 ### Data Flow
 ```mermaid
 graph TD
-    A[User Query] --> B[Search Intent Analyzer]
-    B --> C[Planning Module]
-    C --> D[Agent Core]
-    D --> E[Tools Module]
-    E --> F[DuckDuckGo Search]
-    E --> G[Wikipedia Search]
-    E --> H[Web Content Parser]
-    F --> I[Memory Module]
-    G --> I
-    H --> I
-    I --> J[Report Generator]
-    J --> K[Final Report]
+    User[User Query] --> WebUI[Web Interface]
+    WebUI --> EventBus[Event Bus]
+    EventBus --> Agent[Agent Core]
+    Agent --> Plan[Planning Module]
+    Plan --> Tools[Tools Module]
+    Tools --> Cache[Cache Layer]
+    Tools --> External[External APIs]
+    External --> Memory[Memory Module]
+    Memory --> Report[Report Generator]
+    Report --> WebUI
 ```
 
 ## Security

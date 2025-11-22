@@ -44,19 +44,45 @@ class SearchIntentAnalyzer:
         
         # System message for search intent analysis
         system_message = """
-        You are an expert in analyzing search intentions. Your task is to transform user messages into optimal search queries for Google and Wikipedia.
-        
-        Analyze the user's search intention according to categories, key aspects, and return optimized queries.
+        You are an expert search strategist with access to 9 different search tools:
+
+AVAILABLE TOOLS:
+1. **search_duckduckgo** - General web search (use for most queries)
+2. **search_wikipedia** - Encyclopedia articles (comprehensive, authoritative)
+3. **search_searxng** - Privacy-focused meta-search engine
+4. **search_arxiv** - Scientific and academic papers (physics, CS, math)
+5. **search_youtube** - Video content (tutorials, interviews, performances)
+6. **search_pubmed** - Biomedical and health literature (medical research)
+7. **search_gutenberg** - Free classic books and literature
+8. **search_openstreetmap** - Geographic and location data
+9. **search_wayback** - Historical web archives (archived versions of sites)
+
+Your task is to analyze user queries and recommend the best tools to use.
+
+TOOL SELECTION GUIDELINES:
+- Always include search_duckduckgo for general web info
+- Use search_wikipedia for encyclopedic topics, biographies, historical events
+- Use search_youtube for musicians, artists, performances, video tutorials
+- Use search_arxiv for scientific research papers
+- Use search_pubmed for medical/health topics
+- Use search_gutenberg for classic literature queries
+- Use search_openstreetmap for location/geographic queries
+- Use search_wayback for historical websites or defunct sites
         
         You MUST respond with valid JSON in the exact format specified below:
         {
             "intent_interpretation": "description of what the user wants",
+            "recommended_tools": ["search_duckduckgo", "search_wikipedia"],
+            "tool_queries": {
+                "search_duckduckgo": "optimized query for web search",
+                "search_wikipedia": "precise article title",
+                "search_youtube": "video search query"
+            },
             "time_sensitivity": {
                 "is_sensitive": true/false,
                 "explanation": "explanation if time-sensitive"
             },
             "intent_categories": ["category1", "category2"],
-            "entities": ["entity1", "entity2"],
             "google_query": {
                 "main_query": "optimized query for Google",
                 "keywords": ["keyword1", "keyword2"],

@@ -8,7 +8,9 @@ import json
 import os
 import time
 import logging
+import numpy as np
 from datetime import datetime
+from typing import List, Dict, Any
 
 class MemoryModule:
     def __init__(self, memory_path="./memory"):
@@ -33,7 +35,19 @@ class MemoryModule:
         
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Memory module initialized with path: {memory_path}")
-    
+        
+        # Initialize embedding model
+        self.encoder = None
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
+            self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+            self.logger.info("Embedding model loaded successfully")
+        except ImportError:
+            self.logger.warning("sentence-transformers not installed. Semantic search disabled.")
+        except Exception as e:
+            self.logger.error(f"Error loading embedding model: {e}")
+
     def add_to_short_term(self, item):
         """
         Add an item to short-term memory.
@@ -47,9 +61,34 @@ class MemoryModule:
         # Ensure item has a timestamp
         if 'timestamp' not in item:
             item['timestamp'] = time.time()
+            
+        # Generate embedding if model is available and item has content
+        if self.encoder:
+            content_text = self._get_text_for_embedding(item)
+            if content_text:
+                try:
+                    item['embedding'] = self.encoder.encode(content_text).tolist()
+                except Exception as e:
+                    self.logger.error(f"Error generating embedding: {e}")
         
         self.short_term.append(item)
         self.logger.debug(f"Added item to short-term memory: {item.get('type')}")
+    
+    def _get_text_for_embedding(self, item):
+        """Extract text content for embedding generation."""
+        text_parts = []
+        if 'title' in item:
+            text_parts.append(str(item['title']))
+        if 'content' in item:
+            # Truncate content to avoid token limit issues (though MiniLM handles truncation)
+            content = str(item['content'])
+            text_parts.append(content[:1000])
+        elif 'snippet' in item:
+            text_parts.append(str(item['snippet']))
+        elif 'query' in item:
+            text_parts.append(str(item['query']))
+            
+        return " ".join(text_parts)
     
     def get_short_term(self):
         """
@@ -74,7 +113,12 @@ class MemoryModule:
         if 'timestamp' not in item:
             item['timestamp'] = time.time()
         
-        self.long_term.append(item)
+        # Remove embedding before saving to JSON (too large)
+        item_to_save = item.copy()
+        if 'embedding' in item_to_save:
+            del item_to_save['embedding']
+            
+        self.long_term.append(item_to_save)
         self._save_long_term()
         
         self.logger.debug(f"Added item to long-term memory: {item.get('type')}")
@@ -151,7 +195,7 @@ class MemoryModule:
     
     def get_relevant_content(self, query, max_items=10):
         """
-        Get content relevant to the query.
+        Get content relevant to the query using semantic search if available.
         
         Args:
             query: The query to find relevant content for
@@ -160,9 +204,45 @@ class MemoryModule:
         Returns:
             List of relevant memory items
         """
-        # In a production system, this would use embedding-based semantic search
-        # For this implementation, we'll use a simple keyword-based approach
-        
+        if self.encoder:
+            return self._get_relevant_content_semantic(query, max_items)
+        else:
+            return self._get_relevant_content_keyword(query, max_items)
+
+    def _get_relevant_content_semantic(self, query, max_items):
+        """Get relevant content using cosine similarity."""
+        try:
+            from sklearn.metrics.pairwise import cosine_similarity
+            
+            query_embedding = self.encoder.encode(query).reshape(1, -1)
+            
+            scored_items = []
+            for item in self.short_term:
+                if 'embedding' in item:
+                    item_embedding = np.array(item['embedding']).reshape(1, -1)
+                    score = cosine_similarity(query_embedding, item_embedding)[0][0]
+                    
+                    # Boost score for parsed content
+                    if item.get('type') == 'parsed_content':
+                        score *= 1.2
+                        
+                    if score > 0.3: # Threshold
+                        scored_items.append((score, item))
+            
+            # Sort by score
+            scored_items.sort(key=lambda x: x[0], reverse=True)
+            
+            self.logger.info(f"Found {len(scored_items)} semantically relevant items")
+            return [item for _, item in scored_items[:max_items]]
+            
+        except Exception as e:
+            self.logger.error(f"Error in semantic search: {e}")
+            return self._get_relevant_content_keyword(query, max_items)
+
+    def _get_relevant_content_keyword(self, query, max_items):
+        """
+        Get content relevant to the query using keywords.
+        """
         query_words = set(query.lower().split())
         scored_items = []
         

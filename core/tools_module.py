@@ -5,32 +5,31 @@ Tools Module - Implements search tools for the agent.
 Includes DuckDuckGo search, Wikipedia search, and web page parsing.
 """
 import logging
-import requests
-import time
-import json
-import re
-import sys
+import aiohttp
+import asyncio
 import os
-from urllib.parse import urlencode, quote_plus
+import sys
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type
-)
 
 # Add current directory to path for importing tools
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-# Import DuckDuckGoSearcher from tools directory
-from tools.tool_search_duckduckgo import DuckDuckGoSearcher, default_searcher
+from core.tools.base import BaseTool
+from core.tools.tool_duckduckgo import DuckDuckGoTool
+from core.tools.tool_wikipedia import WikipediaTool
+from core.tools.tool_searxng import SearXNGTool
+from core.tools.tool_arxiv import ArXivTool
+from core.tools.tool_wayback import WaybackTool
+from core.tools.tool_openstreetmap import OpenStreetMapTool
+from core.tools.tool_youtube import YouTubeTool
+from core.tools.tool_gutenberg import GutenbergTool
+from core.tools.tool_pubmed import PubMedTool
 
 class ToolsModule:
-    def __init__(self, memory, llm_service, max_results=5, 
+    def __init__(self, memory, llm_service, config: dict, max_results=5, 
                  safe_search=True, parse_top_results=3):
         """
         Initialize the tools module.
@@ -38,6 +37,7 @@ class ToolsModule:
         Args:
             memory: Memory module for storing results
             llm_service: LLM service for analysis
+            config: Full configuration dictionary
             max_results: Maximum number of search results to return
             safe_search: Whether to enable safe search
             parse_top_results: Number of top results to consider for parsing
@@ -50,275 +50,195 @@ class ToolsModule:
         
         self.logger = logging.getLogger(__name__)
         
-        # User agent for web requests
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                          '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://duckduckgo.com/'
+                          '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-    
-    @retry(
-        retry=retry_if_exception_type((
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.HTTPError
-        )),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
-    def search_duckduckgo(self, query):
-        """
-        Search DuckDuckGo for the given query using the enhanced DuckDuckGoSearcher.
-        """
-        self.logger.info(f"Searching DuckDuckGo for: {query}")
         
-        try:
-            # Check if query contains Cyrillic characters (Russian)
-            is_cyrillic = bool(re.search('[а-яА-Я]', query))
-            
-            if default_searcher is not None:
-                searcher = default_searcher
-            else:
-                searcher = DuckDuckGoSearcher(use_cache=True, verbose=False)
-            
-            raw_results = searcher.search(query)
-            
-            results = []
-            for item in raw_results:
-                results.append({
-                    "title": item.get("title", ""),
-                    "content": item.get("content", ""),
-                    "snippet": item.get("content", ""),  # Add snippet field for compatibility
-                    "url": item.get("link", "") or item.get("url", "")
-                })
-            
-            self.logger.info(f"Found {len(results)} results")
-            return results
-        except Exception as e:
-            self.logger.error(f"Error searching DuckDuckGo: {e}")
-            return []
+        # Initialize cache
+        from core.caching.factory import CacheFactory
+        cache_config = config.get('cache', {'provider': 'sqlite', 'sqlite_path': './data/cache.db'})
+        self.cache = CacheFactory.create(cache_config)
+        self.logger.info("Cache initialized")
+        
+        # Initialize rate limiter
+        from core.rate_limiter import RateLimiter
+        rate_limit_config = config.get('rate_limits', {'default': {'requests_per_minute': 30}})
+        self.rate_limiter = RateLimiter(rate_limit_config)
+        self.logger.info("Rate limiter initialized")
+        
+        # Register tools
+        self.tools = {}
+        self.register_tool(DuckDuckGoTool())
+        self.register_tool(WikipediaTool())
+        self.register_tool(SearXNGTool())
+        self.register_tool(ArXivTool())
+        self.register_tool(WaybackTool())
+        self.register_tool(OpenStreetMapTool())
+        self.register_tool(YouTubeTool())
+        self.register_tool(GutenbergTool())
+        self.register_tool(PubMedTool())
+        
+    def register_tool(self, tool: BaseTool):
+        """Register a tool."""
+        self.tools[tool.name] = tool
+        self.logger.info(f"Registered tool: {tool.name}")
+        
+    def get_tool(self, name: str) -> BaseTool:
+        """Get a tool by name."""
+        return self.tools.get(name)
+        
+    async def execute_tool(self, name: str, **kwargs):
+        """Execute a tool by name with caching and rate limiting."""
+        # Check cache first
+        cache_key = f"{name}:{str(kwargs)}"
+        cached_result = await self.cache.get(cache_key)
+        if cached_result is not None:
+            self.logger.debug(f"Cache hit for {name}")
+            return cached_result
+        
+        # Apply rate limiting
+        await self.rate_limiter.acquire(name, wait=True)
+        
+        # Execute tool
+        tool = self.get_tool(name)
+        if not tool:
+            raise ValueError(f"Tool {name} not found")
+        
+        result = await tool.execute(**kwargs)
+        
+        # Cache result
+        await self.cache.set(cache_key, result)
+        
+        return result
+
+    async def search_duckduckgo(self, query):
+        """
+        Search DuckDuckGo for the given query.
+        Wrapper for backward compatibility.
+        """
+        return await self.execute_tool("search_duckduckgo", query=query)
     
-    # The _fallback_search method has been removed as the enhanced search module is now used
-    
-    @retry(
-        retry=retry_if_exception_type((
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.HTTPError
-        )),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
-    def search_wikipedia(self, query):
+    async def search_wikipedia(self, query):
         """
         Search Wikipedia.
-        
-        Args:
-            query: Search query string
-            
-        Returns:
-            Dictionary with Wikipedia page information
+        Wrapper for backward compatibility.
         """
-        self.logger.info(f"Searching Wikipedia for: {query}")
+        return await self.execute_tool("search_wikipedia", query=query)
+            
+    async def parse_duckduckgo_result(self, result: dict) -> str:
+        """Parse content from a DuckDuckGo search result with caching."""
+        from core.parsing_cache import get_parsing_cache
         
-        # URL-encode the query
-        encoded_query = quote_plus(query)
+        url = result.get("url", "")
+        if not url:
+            return ""
         
-        # Try direct page access first
-        wiki_url = f"https://en.wikipedia.org/wiki/{encoded_query}"
+        # Check parsing cache first
+        parsing_cache = get_parsing_cache()
+        cached_content = parsing_cache.get(url)
+        if cached_content:
+            self.logger.info(f"Using cached parsing for: {url}")
+            return cached_content
         
-        try:
-            # Make request
-            response = requests.get(
-                wiki_url, 
-                headers=self.headers,
-                timeout=10
-            )
+        # Not in cache - parse it
+        self.logger.info(f"Parsing (not cached): {url}")
+        
+        parsed_content = ""
+        
+        # Check if it's Wikipedia
+        if "wikipedia.org" in url:
+            # Use Wikipedia API for better results
+            from core.tools.impl_wikipedia import WikipediaToolForLLM
+            wiki_tool = WikipediaToolForLLM()
             
-            # If page doesn't exist, try search
-            if response.status_code == 404 or 'Wikipedia does not have an article' in response.text:
-                return self._wikipedia_search(query)
-            
-            # Parse page
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Get title
-            title = soup.select_one('#firstHeading').get_text(strip=True)
-            
-            # Get summary (first paragraph)
-            content_div = soup.select_one('#mw-content-text')
-            paragraphs = content_div.select('p')
-            
-            summary = ""
-            for p in paragraphs:
-                if p.get_text(strip=True):
-                    summary = p.get_text(strip=True)
-                    break
-            
-            # Get sections
-            sections = []
-            for heading in soup.select('h2'):
-                if not heading.select_one('.mw-headline'):
-                    continue
-                
-                heading_text = heading.select_one('.mw-headline').get_text(strip=True)
-                
-                # Skip certain sections
-                if heading_text in ['References', 'External links', 'See also']:
-                    continue
-                
-                sections.append(heading_text)
-            
-            self.logger.info(f"Found Wikipedia page: {title}")
-            
-            return {
-                "page_found": True,
-                "title": title,
-                "url": response.url,
-                "summary": summary,
-                "sections": sections[:5]  # Limit to top 5 sections
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error accessing Wikipedia page: {str(e)}")
-            return self._wikipedia_search(query)
+            try:
+                # Extract article title from URL
+                import re
+                match = re.search(r'/wiki/([^#?]+)', url)
+                if match:
+                    title = match.group(1).replace('_', ' ')
+                    content = await wiki_tool.async_get_page_content(title)
+                    if content:
+                        parsed_content = content[:5000]  # Limit content
+            except Exception as e:
+                self.logger.error(f"Wikipedia parsing error: {e}")
+        
+        # For non-Wikipedia or if Wikipedia failed, use general parser
+        if not parsed_content:
+            from core.tools.async_link_parser import extract_content_from_url_async
+            try:
+                parsed_content = await extract_content_from_url_async(url)
+            except Exception as e:
+                self.logger.error(f"Error parsing {url}: {e}")
+        
+        # Cache the result (even if empty)
+        if parsed_content:
+            parsing_cache.set(url, parsed_content)
+        
+        return parsed_content
     
-    def _wikipedia_search(self, query):
+    async def _parse_wikipedia_url(self, url):
         """
-        Perform a Wikipedia search when direct page access fails.
+        Parse Wikipedia URL using the Wikipedia API.
         
         Args:
-            query: Search query string
+            url: Wikipedia article URL
             
         Returns:
-            Dictionary with search results
+            Article text content
         """
-        self.logger.info(f"Performing Wikipedia search for: {query}")
-        
-        search_url = f"https://en.wikipedia.org/w/index.php?search={quote_plus(query)}"
-        
         try:
-            # Make request
-            response = requests.get(
-                search_url, 
-                headers=self.headers,
-                timeout=10
-            )
-            response.raise_for_status()
+            # Extract article title from URL
+            # Format: https://en.wikipedia.org/wiki/Article_Title
+            import re
+            from urllib.parse import unquote
             
-            # Check if we were redirected to a specific page
-            if '/wiki/' in response.url and 'Special:Search' not in response.url:
-                # We were redirected to a specific page
-                soup = BeautifulSoup(response.text, 'html.parser')
-                title = soup.select_one('#firstHeading').get_text(strip=True)
-                
-                # Get summary
-                content_div = soup.select_one('#mw-content-text')
-                paragraphs = content_div.select('p')
-                
-                summary = ""
-                for p in paragraphs:
-                    if p.get_text(strip=True):
-                        summary = p.get_text(strip=True)
-                        break
-                
-                self.logger.info(f"Redirected to Wikipedia page: {title}")
-                
-                return {
-                    "page_found": True,
-                    "title": title,
-                    "url": response.url,
-                    "summary": summary
-                }
+            match = re.search(r'wikipedia\.org/wiki/(.+)', url)
+            if not match:
+                self.logger.warning(f"Could not extract title from Wikipedia URL: {url}")
+                return ""
             
-            # Parse search results
-            soup = BeautifulSoup(response.text, 'html.parser')
+            title = unquote(match.group(1))
             
-            # Get search results
-            results = []
-            for result in soup.select('.mw-search-result'):
-                title_el = result.select_one('.mw-search-result-heading a')
-                snippet_el = result.select_one('.searchresult')
+            # Detect language from URL
+            lang_match = re.search(r'https?://([a-z]{2})\.wikipedia\.org', url)
+            language = lang_match.group(1) if lang_match else 'en'
+            
+            self.logger.info(f"Fetching Wikipedia article: {title} (lang: {language})")
+            
+            # Use WikipediaTool to get content via API
+            wiki_tool = self.get_tool('search_wikipedia')
+            if wiki_tool:
+                result = await wiki_tool.execute(query=title, language=language)
                 
-                if title_el and snippet_el:
-                    title = title_el.get_text(strip=True)
-                    snippet = snippet_el.get_text(strip=True)
-                    url = f"https://en.wikipedia.org{title_el['href']}"
-                    
-                    results.append({
-                        "title": title,
-                        "snippet": snippet,
-                        "url": url
-                    })
+                # Extract content from result
+                if result and result.get('page_found'):
+                    content = result.get('content', '')
+                    return content
             
-            # If we have results, return the top one
-            if results:
-                top_result = results[0]
-                self.logger.info(f"Found Wikipedia search result: {top_result['title']}")
-                
-                return {
-                    "page_found": False,
-                    "search_results": results[:3],
-                    "suggestion": top_result['title'],
-                    "url": top_result['url']
-                }
-            
-            self.logger.info("No Wikipedia results found")
-            return {
-                "page_found": False,
-                "search_results": [],
-                "suggestion": None,
-                "url": None
-            }
+            self.logger.warning(f"Could not fetch Wikipedia content for: {title}")
+            return ""
             
         except Exception as e:
-            self.logger.error(f"Error searching Wikipedia: {str(e)}")
-            return {
-                "page_found": False,
-                "error": str(e)
-            }
-    
-    @retry(
-        retry=retry_if_exception_type((
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.HTTPError
-        )),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
-    def parse_duckduckgo_result(self, url):
-        """
-        Parse the content of a DuckDuckGo search result URL.
-        
-        Args:
-            url: The URL to parse
-            
-        Returns:
-            Parsed content as markdown
-        """
-        self.logger.info(f"Parsing DuckDuckGo result: {url}")
-        try:
-            response = requests.get(url, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # Try to extract main content
-            article = soup.find('article')
-            if article:
-                content_html = str(article)
-            else:
-                # Fallback: get the largest <div> by text length
-                divs = soup.find_all('div')
-                content_html = max(divs, key=lambda d: len(d.get_text(strip=True)), default="")
-                content_html = str(content_html)
-            # Convert HTML to markdown
-            markdown = md(content_html)
-            # Truncate if too long
-            if len(markdown) > 8000:
-                markdown = markdown[:8000] + "\n..."
-            return markdown
-        except Exception as e:
-            self.logger.error(f"Error parsing URL {url}: {str(e)}")
-            return f"[Error parsing {url}: {str(e)}]"
+            self.logger.error(f"Error parsing Wikipedia URL {url}: {e}")
+            return ""
+
+    def _parse_html(self, html_content):
+        """Helper to parse HTML to Markdown (CPU bound)."""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # Try to extract main content
+        article = soup.find('article')
+        if article:
+            content_html = str(article)
+        else:
+            # Fallback: get the largest <div> by text length
+            divs = soup.find_all('div')
+            content_html = max(divs, key=lambda d: len(d.get_text(strip=True)), default="")
+            content_html = str(content_html)
+        # Convert HTML to markdown
+        markdown = md(content_html)
+        # Truncate if too long
+        if len(markdown) > 8000:
+            markdown = markdown[:8000] + "\n..."
+        return markdown

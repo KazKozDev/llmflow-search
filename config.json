@@ -1,13 +1,35 @@
 {
     "llm": {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
+        "provider": "ollama",
+        "model": "qwen3:8b",
         "temperature": 0.2,
         "max_tokens": 4096
     },
+    "cache": {
+        "provider": "sqlite",
+        "sqlite_path": "./data/cache.db",
+        "ttl_seconds": 86400,
+        "compress": true
+    },
+    "rate_limits": {
+        "search_duckduckgo": {
+            "requests_per_minute": 10
+        },
+        "search_wikipedia": {
+            "requests_per_minute": 60
+        },
+        "search_pubmed": {
+            "requests_per_minute": 3
+        },
+        "search_arxiv": {
+            "requests_per_minute": 10
+        },
+        "default": {
+            "requests_per_minute": 30
+        }
+    },
     "search": {
         "max_results": 5,
-        "safe_search": true,
         "parse_top_results": 3,
         "use_selenium": true,
         "use_cache": true

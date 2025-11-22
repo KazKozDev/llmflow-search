@@ -101,9 +101,13 @@ class ReportGenerator:
                 information_text += f"### {block['title']} {source_citation}\n\n{content_preview}\n\n"
             
             # Prepare sources list
-            sources_text = "\n\n## References\n\n"
-            for i, source in enumerate(sources, 1):
-                sources_text += f"[{i}] {source['title']} - {source['url']}\n"
+            sources_text = ""
+            if sources:
+                sources_text = "\n\n## References\n\n"
+                for i, source in enumerate(sources, 1):
+                    sources_text += f"[{i}] {source['title']} - {source['url']}\n"
+            else:
+                sources_text = "\n\n*No references found.*"
             
             # Current date and time
             current_datetime = datetime.now()

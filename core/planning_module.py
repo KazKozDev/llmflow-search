@@ -82,12 +82,28 @@ class PlanningModule:
         })
         
         # Add alternative query searches
-        for alt_query in google_query.get("alternative_queries", []):
+        for alt_query in google_query.get("alternative_queries", [])[:2]:  # Limit to 2 alternatives
             if alt_query and alt_query != main_query:
                 plan["steps"].append({
                     "type": "search_duckduckgo",
                     "query": alt_query,
                     "description": f"Search DuckDuckGo for alternative query: {alt_query}"
+                })
+        
+        # Add specialized tool searches based on recommendations
+        recommended_tools = intent_analysis.get("recommended_tools", [])
+        tool_queries = intent_analysis.get("tool_queries", {})
+        
+        for tool_name in recommended_tools:
+            # Skip DuckDuckGo and Wikipedia as they're handled separately
+            if tool_name in ["search_duckduckgo", "search_wikipedia"]:
+                continue
+            
+            if tool_name in tool_queries and tool_queries[tool_name]:
+                plan["steps"].append({
+                    "type": tool_name,
+                    "query": tool_queries[tool_name],
+                    "description": f"Search {tool_name.replace('search_', '')} for: {tool_queries[tool_name]}"
                 })
         
         # Add Wikipedia search using optimized Wikipedia query
@@ -101,8 +117,8 @@ class PlanningModule:
                 "description": f"Search Wikipedia for: {main_article}"
             })
         
-        # Add searches for related categories from Wikipedia
-        for category in wikipedia_query.get("related_categories", []):
+        # Add searches for related categories from Wikipedia (limit to 1)
+        for category in wikipedia_query.get("related_categories", [])[:1]:
             if category:
                 plan["steps"].append({
                     "type": "search_wikipedia",
@@ -227,8 +243,9 @@ class PlanningModule:
                     search_results = item
                     break
             
-            if not search_results or not search_results.get("results"):
-                self.logger.warning("No search results found for revision")
+            # Check if search_results or its 'results' list is empty
+            if not search_results or not search_results.get("results") or len(search_results.get("results")) == 0:
+                self.logger.debug("No search results found for revision, keeping current plan.")
                 return plan
             
             # Generate follow-up searches using the LLM

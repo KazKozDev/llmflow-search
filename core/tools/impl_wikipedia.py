@@ -105,8 +105,9 @@ class WikipediaTool:
         self.cache_timestamp = {}
         self.cache_expiry = 3600
         
+        
         self.headers = {
-            'User-Agent': 'WikipediaToolForLLM/1.0'
+            'User-Agent': 'LLMFlow-Search/1.0 (https://github.com/yourusername/llmflow-search; research@example.com) python-httpx/0.25'
         }
         
         self.language = self.default_language

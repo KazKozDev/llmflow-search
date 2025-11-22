@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLMFlow Search Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <img src="/static/logo.png" alt="LLMFlow Logo" class="logo">
+            <p class="subtitle">Meet your research agent</p>
+        </header>
+
+        <div class="search-section">
+            <div class="search-box">
+                <input type="text" id="queryInput" placeholder="Ask anything... (e.g., Biography of Elon Musk)"
+                    autocomplete="off">
+                <button id="searchBtn" onclick="startSearch()">Search</button>
+            </div>
+            <div class="tools-info">
+                <span>Tools:</span>
+                <span class="tool-badge">DuckDuckGo</span>
+                <span class="tool-badge">Wikipedia</span>
+                <span class="tool-badge">SearXNG</span>
+                <span class="tool-badge">ArXiv</span>
+                <span class="tool-badge">YouTube</span>
+                <span class="tool-badge">PubMed</span>
+                <span class="tool-badge">Gutenberg</span>
+                <span class="tool-badge">OpenStreetMap</span>
+                <span class="tool-badge">Wayback Machine</span>
+            </div>
+        </div>
+
+        <div id="statusSection" class="status-section">
+            <div class="status-message"></div>
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div id="resultSection" class="result-section">
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('report')">Report</button>
+                <button class="tab-button" onclick="switchTab('sources')">Sources</button>
+                <button class="tab-button" onclick="switchTab('admin')">Admin</button>
+            </div>
+            <div id="reportTab" class="tab-content active">
+                <div id="reportContent" class="report-content"></div>
+            </div>
+            <div id="sourcesTab" class="tab-content">
+                <div id="sourcesContent" class="sources-content"></div>
+            </div>
+            <div id="adminTab" class="tab-content">
+                <div class="admin-section">
+                    <h3>System Metrics</h3>
+                    <div id="metricsDisplay" class="metrics-display">
+                        <button id="refreshMetrics" class="refresh-btn" onclick="loadMetrics()">Refresh Metrics</button>
+                        <div id="metricsContent"></div>
+                    </div>
+                </div>
+
+                <div class="admin-section">
+                    <h3>Background Jobs</h3>
+                    <div id="jobsDisplay" class="jobs-display">
+                        <button id="refreshJobs" class="refresh-btn" onclick="loadJobs()">Refresh Jobs</button>
+                        <div id="jobsContent"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="actions">
+                <button onclick="downloadReport()">Download Report</button>
+                <button onclick="clearResults()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
