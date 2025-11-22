@@ -3,9 +3,7 @@
   <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="500"/>
 </p>
 
-<h3 align="center">In-Depth Insights. Clear Outcomes.</h3>
-
-## Description
+<h4 align="center">In-Depth Insights. Clear Outcomes.</h4>
 
 LLMFlow Search Agent is an intelligent research assistant that finds accurate answers to complex questions using advanced search strategies. The agent automatically refines queries, explores multiple information sources, and generates comprehensive reports with proper academic citations.
 
