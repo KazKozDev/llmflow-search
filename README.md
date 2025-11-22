@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="500"/>
+  <img src="https://github.com/user-attachments/assets/86b23e27-a263-49ed-8167-7bcab0c9d7a1" alt="LLMFlow Search Logo" width="400"/>
 </p>
 
 <h4 align="center">In-Depth Insights. Clear Outcomes.</h4>
