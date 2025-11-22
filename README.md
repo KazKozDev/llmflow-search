@@ -9,7 +9,7 @@ LLMFlow Search Agent is an intelligent research assistant that finds accurate an
 
 **Key Features:**
 - **Advanced Search Intent Analyzer**: Optimizes queries for different search engines
-- **Multi-Source Search**: 9 specialized tools including DuckDuckGo, Wikipedia, ArXiv, YouTube, PubMed, and more
+- **Multi-Source Search**: 9 specialized tools including DuckDuckGo, Wikipedia, ArXiv, YouTube, PubMed, etc.
 - **Intelligent Planning**: LLM-guided strategy with dynamic plan revision
 - **Real-Time Web UI**: WebSocket-based interface with live progress updates
 - **High Performance**: Async-first architecture, caching, and resource pooling (30-50x faster init)
