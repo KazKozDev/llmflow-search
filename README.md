@@ -19,12 +19,12 @@ Completely free — runs locally with Ollama using qwen3:8B model, requiring no 
 - **Observability**: Built-in metrics dashboard and background job system
 
 <p align="center">
-  <img width="700" src="https://github.com/user-attachments/assets/5fdf2620-cd98-445d-8ceb-2f82cc245ea2" alt="LLMFlow-Search">
+  <img width="800" src="https://github.com/user-attachments/assets/5fdf2620-cd98-445d-8ceb-2f82cc245ea2" alt="LLMFlow-Search">
 </p>
 
 
   <p align="center">
-  <img width="700" src="https://github.com/user-attachments/assets/ac89e2ff-4bc3-401a-a514-e645fd093465" alt="Screenshot">
+  <img width="800" src="https://github.com/user-attachments/assets/ac89e2ff-4bc3-401a-a514-e645fd093465" alt="Screenshot">
 
 </p>
 
