@@ -240,15 +240,10 @@ pip install -r requirements.txt
 3. Run tests: `python -m pytest`
 4. Submit pull request with clear commit messages
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Contact
-
-- **GitHub Issues**: [Project Issues](https://github.com/KazKozDev/LLMFlow-Search/issues)
-- **LinkedIn**: [Artem KK](https://www.linkedin.com/in/kazkozdev/)
-
 ---
 
-⭐ If you find this project helpful, please give it a star
+If you like this project, please give it a star ⭐
+
+For questions, feedback, or support, reach out to:
+
+[Artem KK](https://www.linkedin.com/in/kazkozdev/) | MIT [LICENSE](LICENSE)
