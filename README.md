@@ -166,6 +166,7 @@ python -m pytest
 python -m pytest --cov=core --cov=tools
 ```
 
+
 ## Architecture
 
 ### Core Components
@@ -175,17 +176,6 @@ python -m pytest --cov=core --cov=tools
 - **Event Bus**: Real-time communication system for UI updates
 - **Memory Module**: Semantic search and context management
 - **Planning Module**: Creates and revises search strategies
-
-### Search Tools
-- **General**: DuckDuckGo, SearXNG
-- **Academic/Books**: ArXiv, PubMed, Project Gutenberg
-- **Knowledge**: Wikipedia, Wayback Machine
-- **Media/Maps**: YouTube, OpenStreetMap
-
-### Monitoring & Admin
-The web interface includes an **Admin Panel** (`/admin`) featuring:
-- **System Metrics**: Cache hit rates, LLM latency, error rates
-- **Background Jobs**: Queue management for long-running searches
 
 ### Data Flow
 ```mermaid
@@ -201,6 +191,17 @@ graph TD
     Memory --> Report[Report Generator]
     Report --> WebUI
 ```
+### Search Tools
+- **General**: DuckDuckGo, SearXNG
+- **Academic/Books**: ArXiv, PubMed, Project Gutenberg
+- **Knowledge**: Wikipedia, Wayback Machine
+- **Media/Maps**: YouTube, OpenStreetMap
+
+### Monitoring & Admin
+The web interface includes an **Admin Panel** (`/admin`) featuring:
+- **System Metrics**: Cache hit rates, LLM latency, error rates
+- **Background Jobs**: Queue management for long-running searches
+
 
 ---
 
