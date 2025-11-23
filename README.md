@@ -202,44 +202,6 @@ graph TD
     Report --> WebUI
 ```
 
-## Security
-
-- Never commit API keys to version control
-- Use `.env` files for sensitive configuration
-- All user inputs are validated and sanitized
-- HTTPS-only connections for external requests
-
-**Reporting Vulnerabilities:** Email security concerns to maintainers, do not create public issues.
-
-## Code of Conduct
-
-- Use welcoming and inclusive language
-- Be respectful of differing viewpoints
-- Accept constructive criticism gracefully
-- Focus on what is best for the community
-
-## Contributing
-
-### Development Setup
-```bash
-# Fork repository and setup
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### Code Quality Requirements
-- **PEP8/flake8 compliance**: 79 characters max, proper imports
-- **Documentation**: All public functions must have docstrings
-- **Testing**: Unit tests required for core functionality
-- **Error handling**: Use specific exceptions, no bare `except:`
-
-### Submitting Changes
-1. Create feature branch: `git checkout -b feature/your-feature`
-2. Run linting: `flake8 .`
-3. Run tests: `python -m pytest`
-4. Submit pull request with clear commit messages
-
 ---
 
 If you like this project, please give it a star ⭐
