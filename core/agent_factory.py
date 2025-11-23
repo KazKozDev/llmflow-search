@@ -112,15 +112,15 @@ class AgentFactory:
         # Search intent analyzer (optional)
         intent_analyzer = None
         if enable_intent_analyzer and config.intent_analyzer.enabled:
-            intent_analyzer = SearchIntentAnalyzer(llm_service)
+            intent_analyzer = SearchIntentAnalyzer(llm_gateway)  # Use gateway
         
         # Planning module
-        planning = PlanningModule(llm_service, search_intent_analyzer=intent_analyzer)
+        planning = PlanningModule(llm_gateway, search_intent_analyzer=intent_analyzer)  # Use gateway
         
         # Tools module (shares cache)
         tools = ToolsModule(
             memory=memory,
-            llm_service=llm_service,
+            llm_service=llm_gateway,  # Use gateway
             config=config.model_dump(),
             max_results=config.search.max_results,
             safe_search=True,
@@ -128,7 +128,8 @@ class AgentFactory:
         )
         
         # Report generator
-        report_generator = ReportGenerator(memory, llm_service)
+        report_generator = ReportGenerator(memory, llm_gateway)  # Use gateway
+
         
         # Event bus (optional)
         event_bus = EventBus(keep_history=True) if enable_events else None

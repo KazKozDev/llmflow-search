@@ -6,6 +6,7 @@ Provides caching, metrics tracking, and fallback support.
 import asyncio
 import hashlib
 import logging
+import concurrent.futures
 from typing import Optional, Dict, Any
 from collections import defaultdict
 import time
@@ -193,6 +194,48 @@ class LLMGateway:
         """Provide simple fallback response when all LLMs fail."""
         logger.warning("Using simple fallback response")
         return "I apologize, but I'm unable to process this request at the moment. Please try again later."
+    
+    def generate_response(self, prompt: str, system_message: str = "", context: str = "") -> str:
+        """
+        Synchronous wrapper for generate() for backward compatibility.
+        
+        Args:
+            prompt: User prompt
+            system_message: System message
+            context: Optional context
+            
+        Returns:
+            Generated response
+        """
+        # Try to get running loop
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - use sync_to_async pattern
+            # Create a new thread to run the async function
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    self.generate(prompt, system_message, context)
+                )
+                return future.result()
+        except RuntimeError:
+            # No running loop - create new one
+            return asyncio.run(self.generate(prompt, system_message, context))
+
+    
+    async def generate_response_async(self, prompt: str, system_message: str = "", context: str = "") -> str:
+        """
+        Async wrapper for generate() for backward compatibility.
+        
+        Args:
+            prompt: User prompt
+            system_message: System message
+            context: Optional context
+            
+        Returns:
+            Generated response
+        """
+        return await self.generate(prompt, system_message, context)
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get current metrics."""

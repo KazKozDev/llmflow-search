@@ -198,6 +198,79 @@ header {
     align-items: center;
 }
 
+/* Toggle Switch Container */
+.search-options {
+    display: flex;
+    align-items: center;
+    margin: 0 10px;
+}
+
+/* The Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    gap: 8px;
+    user-select: none;
+}
+
+/* Hide default checkbox */
+.toggle-switch input {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+    height: 0;
+    width: 0;
+}
+
+/* The Slider */
+.slider {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    background-color: #cbd5e1;
+    border-radius: 24px;
+    transition: .3s;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: .3s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Checked State */
+.toggle-switch input:checked+.slider {
+    background: linear-gradient(135deg, #4a90e2 0%, #2b5b8a 100%);
+}
+
+.toggle-switch input:checked+.slider:before {
+    transform: translateX(20px);
+}
+
+/* Label Text */
+.label-text {
+    color: #64748b;
+    font-weight: 500;
+    font-size: 1rem;
+    transition: color 0.3s;
+}
+
+.toggle-switch input:checked~.label-text {
+    color: #2b5b8a;
+    font-weight: 600;
+}
+
 .logo {
     max-width: 480px;
     /* 4x larger than previous 120px */
@@ -213,7 +286,7 @@ header h1 {
 }
 
 .subtitle {
-    font-size: 1.3rem;
+    font-size: 1.4rem;
     opacity: 0.9;
 }
 
@@ -229,6 +302,7 @@ header h1 {
     display: flex;
     gap: 10px;
     margin-bottom: 20px;
+    align-items: center;
 }
 
 #queryInput {

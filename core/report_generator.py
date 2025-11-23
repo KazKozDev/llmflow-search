@@ -115,7 +115,7 @@ class ReportGenerator:
             current_time = current_datetime.strftime("%H:%M:%S")
             
             # Create universal prompt for LLM that works with any query type
-            prompt = f"""Create an informative analytical report on the query: \"{query}\"
+            prompt = f"""Create an informative analytical report on the query: "{query}"
 
 Below is information from different sources. Your task is to thoroughly analyze all the information and create a coherent, comprehensive text:
 
@@ -132,6 +132,7 @@ Report requirements:
    - Include all important facts and data from sources
    - Synthesize information into a single coherent narrative
    - Add your analysis and conclusions, organically weaving them into the text
+   - **CRITICAL: Use ONLY the information provided above. DO NOT invent facts or sources.**
 
 3. Academic Citation:
    - Use proper academic citation format
@@ -139,6 +140,7 @@ Report requirements:
    - Cite each specific fact or statement with the appropriate numbered reference
    - Every paragraph should contain at least one or more citations
    - All factual claims must be supported by citations
+   - **CRITICAL: Use ONLY the citation numbers provided in the source text (e.g. [1], [2]). DO NOT invent new citation numbers.**
 
 4. Time context:
    - The current date is {current_date}
@@ -152,6 +154,7 @@ Volume and style:
 - Maintain formal, scholarly language throughout
 
 DO NOT INCLUDE the list of sources - I will add it automatically.
+DO NOT add a "References" or "Bibliography" section at the end.
 
 Report date: {current_date} {current_time}
 """
@@ -171,7 +174,7 @@ Today's date is {current_date} and the current time is {current_time}. Use this 
 
 Always maintain proper academic citation practices. Each factual statement should be supported by a numbered citation in square brackets that corresponds to the numbered reference list.
 
-Strive to create the most complete and informative report that will be useful to the reader and give them a deep understanding of the topic."""
+**CRITICAL RULE:** You must ONLY use the sources provided in the context. NEVER invent, hallucinate, or create "illustrative" references. If you don't have enough information, state that based on the available sources. Do not make up books, articles, or links. Do not output a References section."""
             report_content = self.llm_service.generate_response(prompt, system_message)
             
             # Add title and sources
@@ -181,6 +184,11 @@ Strive to create the most complete and informative report that will be useful to
             # Clean up the report content to remove any HTML or unwanted formatting
             clean_report = re.sub(r'<[^>]+>', '', report_content)
             clean_report = re.sub(r'\[\s*\]', '', clean_report)  # Remove empty citations
+            
+            # Post-processing: Remove any "References" or "Sources" section the LLM might have added
+            # Matches "## References", "### Sources", "References:", etc. at the end of the text
+            clean_report = re.sub(r'(?i)\n+#+\s*(References|Sources|Bibliography|Citations).*$', '', clean_report, flags=re.DOTALL)
+            
             clean_report = re.sub(r'\n{3,}', '\n\n', clean_report)  # Remove excessive newlines
             
             # Combine everything

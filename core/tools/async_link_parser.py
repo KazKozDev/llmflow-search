@@ -2,34 +2,60 @@
 """
 LLMFlow Search Agent - Async Link Parsing Tool
 Async implementation of web content extraction with improved performance.
+Async link parser with multiple fallback methods.
 """
-
-import aiohttp
 import asyncio
-from bs4 import BeautifulSoup
-from newspaper import Article
-from urllib.parse import urlparse
-import re
 import logging
-from readability import Document
-from typing import Tuple, Optional
+from typing import Optional
+from urllib.parse import urlparse
+import aiohttp
+from bs4 import BeautifulSoup
+from newspaper import Article # Keep for now, will be moved/removed later
+import re # Keep for now, will be moved/removed later
+from readability import Document # Keep for now, will be moved/removed later
+from readability import Document # Keep for now, will be moved/removed later
+from typing import Tuple # Keep for now, will be moved/removed later
+from core.tools.selenium_driver import SeleniumDriver
 
-# Setup logger
 logger = logging.getLogger(__name__)
+
+
 
 # Modern User-Agent
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-def is_valid_url(url: str) -> bool:
-    """Check if the given string is a valid URL."""
-    if not url:
-        return False
-    try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc])
-    except Exception as e:
-        logger.error(f"Error validating URL {url}: {e}")
-        return False
+
+class AsyncLinkParser:
+    """
+    Asynchronous link parser with multiple extraction methods:
+    1. PDF Parser (for .pdf files)
+    2. BeautifulSoup (fast, simple HTML)
+    3. Newspaper3k (article-focused)
+    4. Readability (content extraction)
+    """
+    
+    def __init__(self, timeout: int = 10, max_content_length: int = 500000):
+        """
+        Initialize parser.
+        
+        Args:
+            timeout: Request timeout in seconds
+            max_content_length: Maximum content length to process
+        """
+        self.timeout = timeout
+        self.max_content_length = max_content_length
+
+    @staticmethod
+    def is_valid_url(url: str) -> bool:
+        """Check if the given string is a valid URL."""
+        if not url:
+            return False
+        try:
+            result = urlparse(url)
+            return all([result.scheme, result.netloc])
+        except Exception as e:
+            logger.error(f"Error validating URL {url}: {e}")
+            return False
 
 
 async def method1_bs4_async(url: str, session: aiohttp.ClientSession) -> str:
@@ -168,6 +194,30 @@ def _readability_parse(html: str) -> str:
     return clean_text.strip()
 
 
+async def method_selenium_async(url: str) -> str:
+    """Parse content using Selenium (async wrapper)."""
+    logger.debug(f"Method Selenium attempting: {url}")
+    try:
+        loop = asyncio.get_event_loop()
+        # Use shared driver
+        driver_helper = SeleniumDriver(verbose=False)
+        content = await loop.run_in_executor(None, _selenium_parse, driver_helper, url)
+        return content
+    except Exception as e:
+        logger.error(f"Error in method_selenium for {url}: {e}")
+        return f"Error: {str(e)}"
+
+
+def _selenium_parse(driver_helper: SeleniumDriver, url: str) -> str:
+    """Sync Selenium parsing."""
+    html = driver_helper.fetch_page_content(url)
+    if not html:
+        return "Error: Selenium fetch failed"
+    
+    # Use BS4 to extract text from the rendered HTML
+    return _parse_bs4(html, url)
+
+
 async def compare_methods_async(url: str) -> Tuple[str, str]:
     """
     Compare parsing methods with early exit optimization.
@@ -218,6 +268,13 @@ async def compare_methods_async(url: str) -> Tuple[str, str]:
         if best_result:
             logger.info(f"Selected {best_method} (longest): {best_length} chars for {url}")
             return best_result, best_method
+            
+        # If all standard methods failed or returned short content, try Selenium as last resort
+        logger.info(f"Standard methods failed/insufficient for {url}, trying Selenium...")
+        selenium_result = await method_selenium_async(url)
+        if selenium_result and not selenium_result.startswith("Error") and len(selenium_result) > 200:
+            logger.info(f"Selected Selenium: {len(selenium_result)} chars for {url}")
+            return selenium_result, "selenium"
         
         # All failed
         logger.warning(f"All methods failed for {url}")
@@ -268,7 +325,7 @@ async def extract_content_from_url_async(url: str) -> str:
     """
     logger.info(f"Extracting content from: {url}")
     
-    if not url or not is_valid_url(url):
+    if not url or not AsyncLinkParser.is_valid_url(url):
         error_msg = f"Invalid URL: {url}"
         logger.error(error_msg)
         return f"Error: {error_msg}"

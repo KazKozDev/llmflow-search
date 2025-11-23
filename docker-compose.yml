@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  search-agent:
+    build: .
+    container_name: llmflow_search
+    shm_size: '2gb'
+
+    volumes:
+      - .:/app
+      - ./reports:/app/reports
+
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - DOCKER_CONTAINER=true
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

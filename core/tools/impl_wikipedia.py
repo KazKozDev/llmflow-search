@@ -191,9 +191,10 @@ class WikipediaTool:
             try:
                 search_results = await self.search_wikipedia(title, lang, limit=1)
                 
-                if search_results.get('count', 0) > 0:
+                # Handle list response format (search_wikipedia returns a list of dicts)
+                if isinstance(search_results, list) and len(search_results) > 0:
                     # Use the first search result
-                    first_result = search_results['results'][0]
+                    first_result = search_results[0]
                     actual_title = first_result['title']
                     
                     print(f"Using search result: {actual_title}")

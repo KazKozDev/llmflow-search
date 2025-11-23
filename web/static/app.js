@@ -2,42 +2,93 @@ let currentReport = '';
 let currentSources = [];
 
 async function startSearch() {
-    const query = document.getElementById('queryInput').value.trim();
-    if (!query) {
-        alert('Please enter a search query');
-        return;
+    const query = document.getElementById('queryInput').value;
+    if (!query) return;
+
+    const isDeepSearch = document.getElementById('deep-search-toggle').checked;
+
+    // UI Updates
+    document.getElementById('searchBtn').disabled = true;
+
+    // Clear previous results but show the section immediately
+    document.getElementById('reportContent').innerHTML = '<p style="color: #999; text-align: center; padding: 2rem;">Searching...</p>';
+    document.getElementById('sourcesContent').innerHTML = '';
+
+    // Show result section immediately (so Admin tab is accessible)
+    document.getElementById('resultSection').classList.add('active');
+
+    // Switch to Report tab
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.querySelector('.tab-button:first-child').classList.add('active');
+    document.getElementById('reportTab').classList.add('active');
+
+    if (!isDeepSearch) {
+        // Standard Search UI
+        document.getElementById('statusSection').classList.add('active');
+        document.querySelector('.status-message').textContent = 'Initializing agent...';
+        document.querySelector('.progress-fill').style.width = '5%';
+    } else {
+        // Deep Search UI
+        document.getElementById('statusSection').classList.add('active');
+        document.querySelector('.status-message').textContent = 'Submitting background job...';
     }
 
-    // Disable search button
-    const searchBtn = document.getElementById('searchBtn');
-    searchBtn.disabled = true;
-    searchBtn.textContent = 'Searching...';
-
-    // Show status section
-    const statusSection = document.getElementById('statusSection');
-    statusSection.classList.add('active');
-    document.getElementById('resultSection').classList.remove('active');
-
     try {
-        // Create search session
         const response = await fetch('/api/search', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, max_iterations: 10 })
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                query: query,
+                max_iterations: isDeepSearch ? 30 : 10, // Higher limit for deep search
+                mode: isDeepSearch ? 'deep' : 'standard'
+            })
         });
 
         const data = await response.json();
-        const sessionId = data.session_id;
 
-        // Connect via WebSocket
-        connectWebSocket(sessionId);
+        if (isDeepSearch) {
+            handleDeepSearchResponse(data);
+        } else {
+            connectWebSocket(data.session_id);
+        }
 
     } catch (error) {
         console.error('Error:', error);
-        updateStatus('Error starting search: ' + error.message);
-        searchBtn.disabled = false;
-        searchBtn.textContent = 'Search';
+        document.querySelector('.status-message').textContent = 'Error starting search';
+        document.getElementById('searchBtn').disabled = false;
     }
+}
+
+function handleDeepSearchResponse(data) {
+    const statusSection = document.getElementById('statusSection');
+    const resultSection = document.getElementById('resultSection');
+    const reportContent = document.getElementById('reportContent');
+
+    statusSection.classList.remove('active');
+    resultSection.classList.add('active');
+
+    // Switch to report tab
+    switchTab('report');
+
+    reportContent.innerHTML = `
+        <div class="metric-card" style="max-width: 600px; margin: 2rem auto; text-align: center;">
+            <h3 style="color: var(--primary-color); margin-bottom: 1rem;">🚀 Deep Search Started</h3>
+            <p>Your autonomous research job has been submitted successfully.</p>
+            <div style="background: rgba(0,0,0,0.05); padding: 1rem; border-radius: 8px; margin: 1.5rem 0;">
+                <strong>Job ID:</strong> <span style="font-family: monospace;">${data.job_id}</span>
+            </div>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+                You can close this tab. The agent will continue working in the background.
+                Check the <strong>Admin</strong> tab to view progress and results.
+            </p>
+            <button onclick="switchTab('admin')" class="action-btn" style="background: #4a90e2; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer;">View Job Status</button>
+        </div>
+    `;
+
+    document.getElementById('searchBtn').disabled = false;
 }
 
 function connectWebSocket(sessionId) {
@@ -186,18 +237,18 @@ async function loadMetrics() {
         const data = await response.json();
         displayMetrics(data);
     } catch (error) {
-        document.getElementById('metricsContent').innerHTML = 
+        document.getElementById('metricsContent').innerHTML =
             `<p style="color: red;">Error loading metrics: ${error.message}</p>`;
     }
 }
 
 function displayMetrics(data) {
     const container = document.getElementById('metricsContent');
-    
+
     let html = '<div class="metric-card">';
     html += '<h4>LLM Gateway</h4>';
     html += '<div class="metric-grid">';
-    
+
     if (data.llm) {
         html += `
             <div class="metric-item">
@@ -218,15 +269,15 @@ function displayMetrics(data) {
             </div>
         `;
     }
-    
+
     html += '</div></div>';
-    
+
     // System metrics
     if (data.system && data.system.counters) {
         html += '<div class="metric-card">';
         html += '<h4>System Counters</h4>';
         html += '<div class="metric-grid">';
-        
+
         for (const [key, value] of Object.entries(data.system.counters)) {
             html += `
                 <div class="metric-item">
@@ -235,13 +286,16 @@ function displayMetrics(data) {
                 </div>
             `;
         }
-        
+
         html += '</div></div>';
     }
-    
+
     html += `<p style="font-size: 0.85rem; color: #999; margin-top: 1rem;">Last updated: ${new Date(data.timestamp).toLocaleString()}</p>`;
-    
+
     container.innerHTML = html;
+
+    // Force DOM reflow to ensure update
+    void container.offsetHeight;
 }
 
 async function loadJobs() {
@@ -250,21 +304,21 @@ async function loadJobs() {
         const data = await response.json();
         displayJobs(data);
     } catch (error) {
-        document.getElementById('jobsContent').innerHTML = 
+        document.getElementById('jobsContent').innerHTML =
             `<p style="color: red;">Error loading jobs: ${error.message}</p>`;
     }
 }
 
 function displayJobs(data) {
     const container = document.getElementById('jobsContent');
-    
+
     if (!data.jobs || data.jobs.length === 0) {
         container.innerHTML = '<p class="placeholder">No background jobs yet</p>';
         return;
     }
-    
+
     let html = '';
-    
+
     data.jobs.forEach(job => {
         html += `
             <div class="job-item ${job.status}">
@@ -283,7 +337,7 @@ function displayJobs(data) {
             </div>
         `;
     });
-    
+
     // Stats summary
     if (data.stats) {
         html += '<div class="metric-card" style="margin-top: 1rem;">';
@@ -301,8 +355,11 @@ function displayJobs(data) {
         }
         html += '</div></div>';
     }
-    
+
     container.innerHTML = html;
+
+    // Force DOM reflow to ensure update
+    void container.offsetHeight;
 }
 
 // Auto-refresh when admin tab is active
@@ -320,7 +377,7 @@ function switchTab(tab) {
         content.classList.remove('active');
     });
     document.getElementById(tab + 'Tab').classList.add('active');
-    
+
     // Auto-refresh admin panel
     if (tab === 'admin') {
         loadMetrics();

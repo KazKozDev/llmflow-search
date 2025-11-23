@@ -23,7 +23,7 @@ from core.config import AppConfig, load_config
 from core.agent_factory import AgentFactory
 from core.event_bus import Event
 from core.monitoring import get_metrics
-from core.background_jobs import get_job_queue, JobStatus
+from core.background_jobs import get_job_queue, JobStatus, Job
 from core.memory_module import MemoryModule
 from core.llm_service import LLMService
 from core.planning_module import PlanningModule
@@ -71,11 +71,14 @@ active_sessions: Dict[str, dict] = {}
 class SearchRequest(BaseModel):
     query: str
     max_iterations: int = 10
+    mode: str = "standard"  # "standard" or "deep"
 
 
 class SearchResponse(BaseModel):
     session_id: str
     status: str
+    job_id: str = None
+    message: str = None
 
 
 @app.get("/")
@@ -85,17 +88,50 @@ async def root():
 
 
 @app.post("/api/search", response_model=SearchResponse)
-async def create_search(request: SearchRequest):
-    """Create a new search session."""
+async def start_search(request: SearchRequest):
+    """Start a new search session or background job."""
+    
+    # Handle Deep Search (Background Job)
+    if request.mode == "deep":
+        job_queue = get_job_queue()
+        
+        # Import worker here to avoid circular imports
+        from core.deep_search_worker import run_deep_search_worker
+        
+        # Define the task wrapper (receives Job object as parameter)
+        async def worker(job: Job):
+            await run_deep_search_worker(
+                job=job,
+                config=config,
+                query=request.query,
+                max_iterations=max(request.max_iterations, 30)
+            )
+            return job.result  # Return result for JobQueue
+            
+        # Submit job - note: worker receives job, query is metadata
+        job_id = await job_queue.submit(
+            query=request.query,
+            worker=worker
+        )
+        
+        return SearchResponse(
+            session_id="",
+            status="queued",
+            job_id=job_id,
+            message="Deep search job started in background"
+        )
+
+    # Standard Search (WebSocket)
     session_id = str(uuid.uuid4())
     active_sessions[session_id] = {
         "query": request.query,
         "max_iterations": request.max_iterations,
-        "status": "pending",
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now().isoformat(),
+        "status": "initialized"
     }
-    logger.info(f"Created search session {session_id} for query: {request.query}")
-    return SearchResponse(session_id=session_id, status="pending")
+    
+    logger.info(f"Created new standard session: {session_id}")
+    return SearchResponse(session_id=session_id, status="initialized")
 
 
 @app.websocket("/ws/search/{session_id}")

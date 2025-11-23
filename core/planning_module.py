@@ -140,20 +140,43 @@ class PlanningModule:
         Returns:
             A plan dictionary with search steps
         """
-        # Enhanced system prompt for creating a plan
-        system_message = """
-        You are a professional research planner tasked with creating an efficient search strategy.
-        You MUST respond with valid JSON in the exact format specified below:
-        {
-            "main_keywords": ["primary search query"],
-            "wikipedia_topics": ["topic 1", "topic 2"],
-            "alternative_keywords": ["alternative query 1", "alternative query 2"],
-            "subtopics": ["subtopic 1", "subtopic 2"]
-        }
+        # Enhanced system message with tool descriptions
+        system_message = f"""
+        You are an advanced search planning AI. Your task is to create an efficient search plan.
         
-        Your response should contain ONLY the JSON object, nothing else.
-        Do not include any explanations, notes, or additional text outside the JSON structure.
-        The JSON must be properly formatted with double quotes around keys and string values.
+        AVAILABLE TOOLS:
+        1. search_arxiv - Scientific papers from ArXiv (ML, physics, computer science)
+        2. search_pubmed - Medical/biological research papers
+        3. search_gutenberg - Classic literature and books
+        4. search_youtube - Video tutorials and lectures
+        5. search_openstreetmap - Geographic locations and map data
+        6. search_wayback - Historical website versions from Internet Archive
+        7. search_wikipedia - Encyclopedia articles for background information
+        8. search_duckduckgo - General web search
+        9. search_searxng - Meta-search engine for comprehensive web results
+        
+        TOOL SELECTION GUIDELINES:
+        - For "papers", "research", "articles", "studies" → use search_arxiv or search_pubmed
+        - For "100 papers on X" → use specialized tool (ArXiv/PubMed) which can handle bulk requests
+        - For "medical", "disease", "treatment" → use search_pubmed
+        - For "books", "literature", "novels" → use search_gutenberg
+        - For "video", "tutorial", "how to" → use search_youtube
+        - For "location", "where is", "map" → use search_openstreetmap
+        - For "history of website" → use search_wayback
+        - For background/overview → use search_wikipedia
+        - For general queries → use search_duckduckgo
+        
+        IMPORTANT: If user asks for many results (e.g., "100 papers"), choose the SPECIALIZED tool
+        (ArXiv for science, PubMed for medicine) as they support bulk queries.
+        
+        Your response must be ONLY valid JSON with this structure:
+        {{
+            "main_keywords": ["primary search terms"],
+            "wikipedia_topics": ["background topics for context"],
+            "alternative_keywords": [],
+            "subtopics": []
+        }}
+        
         Limit each category to 1-2 items to create a focused and efficient search plan.
         """
         
@@ -243,9 +266,8 @@ class PlanningModule:
                     search_results = item
                     break
             
-            # Check if search_results or its 'results' list is empty
-            if not search_results or not search_results.get("results") or len(search_results.get("results")) == 0:
-                self.logger.debug("No search results found for revision, keeping current plan.")
+            if not search_results or not search_results.get("results"):
+                self.logger.warning("No search results found for revision")
                 return plan
             
             # Generate follow-up searches using the LLM
