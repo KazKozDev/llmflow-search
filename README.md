@@ -9,6 +9,10 @@ LLMFlow Search Agent is an intelligent research assistant that finds accurate an
 
 Completely free — runs locally with Ollama using qwen3:8B model, requiring no registration, API keys, or subscriptions, working out of the box for unlimited research queries.  Perfect for anyone who works with information and values privacy: students, researchers, analysts, consultants, journalists, product managers, startups, and knowledge workers.
 
+<p align="center">
+  <img width="800" src="https://github.com/user-attachments/assets/5fdf2620-cd98-445d-8ceb-2f82cc245ea2" alt="LLMFlow-Search">
+</p>
+
 **Key Features:**
 - **Advanced Search Intent Analyzer**: Optimizes queries for different search engines
 - **Multi-Source Search**: 9 specialized tools including DuckDuckGo, Wikipedia, ArXiv, YouTube, PubMed, etc.
