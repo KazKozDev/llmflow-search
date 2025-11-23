@@ -90,14 +90,23 @@ As the field continues to evolve, the challenges of balancing model size with pe
 ## References
 
 [1] Ultimate Guide - The Best Small LLMs for Edge Devices in 2025 - https://www.siliconflow.com/articles/en/best-small-llms-for-edge-devices
+
 [2] Understanding Small Language Modes | Microsoft Community Hub - https://techcommunity.microsoft.com/blog/azuredevcommunityblog/understanding-small-language-modes/4466170
+
 [3] Fine-Tuning Small Language Models for Domain-Specific AI: An Edge AI ... - https://arxiv.org/html/2503.01933v1
+
 [4] Benchmarking and Performance Metrics for Edge AI SLMs - https://peaklightai.medium.com/benchmarking-and-performance-metrics-for-edge-ai-slms-e9fe3946d41d
+
 [5] Mixflow.AI - The #1 AI Platform for everyone! - https://mixflow.ai/blog/ai-benchmarks-june-2025-how-small-language-models-dominate-edge-computing/
+
 [6] PDFDemystifying Small Language Models for Edge Deployment - https://aclanthology.org/2025.acl-long.718.pdf
+
 [7] Edge-First Language Model Inference: Models, Metrics, and Tradeoffs - https://arxiv.org/abs/2505.16508
+
 [8] Using Small Language Models (SLMs) for Edge Devices: A Smart Move in 2025 - https://www.weengle.com/small-language-models-for-edge-devices/
+
 [9] Wikipedia: Small language model - https://en.wikipedia.org/wiki/Small_language_model
+
 [10] Wikipedia: Artificial intelligence - https://en.wikipedia.org/wiki/Artificial_intelligence
 
 </details> 
