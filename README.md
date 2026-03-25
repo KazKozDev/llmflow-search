@@ -9,11 +9,13 @@
     <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status: Experimental"/>
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"/>
   </p>
+
+  <p>
+    LLMFlow Search breaks your question into a search plan,<br/>
+    runs it across 9 sources from DuckDuckGo to ArXiv,<br/>
+    parses relevant pages and assembles a markdown report with references. All local, all yours.
+  </p>
 </div>
-
-# LLMFlow Search
-
-LLMFlow Search breaks your question into a search plan, runs it across 9 sources from DuckDuckGo to ArXiv, parses relevant pages, and assembles a markdown report with references. All local, all yours.
 
 ## Highlights
 
