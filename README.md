@@ -1,7 +1,6 @@
 <div align="center">
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
 
-  <h1>LLMFlow Search</h1>
   <p>
     Local-first research agent that orchestrates multi-source web search with iterative query refinement to produce citation-backed reports, all in one workflow, powered by local LLM.
   </p>
