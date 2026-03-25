@@ -2,7 +2,6 @@
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
 </p>
 
-# LLMFlow Search
 
 Local research agent for multi-source web search and cited reports.
 
