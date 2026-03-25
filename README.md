@@ -1,20 +1,19 @@
 <div align="center">
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
 
+
   <p>
-    Ask a question -> get a research report with sources. No API keys required - runs on Ollama out of the box.
+    LLMFlow Search breaks your question into a search plan, runs it across 9 sources from DuckDuckGo to ArXiv,<br/>
+    parses relevant pages and assembles a markdown report with references. All local, all yours.
   </p>
+
 
   <p>
     <img src="https://img.shields.io/badge/status-experimental-8A7F6B" alt="Status: Experimental"/>
     <img src="https://img.shields.io/badge/license-MIT-6F8F76" alt="License: MIT"/>
   </p>
 
-  <p>
-    LLMFlow Search breaks your question into a search plan,<br/>
-    runs it across 9 sources from DuckDuckGo to ArXiv,<br/>
-    parses relevant pages and assembles a markdown report with references. All local, all yours.
-  </p>
+  
 </div>
 
 ## Highlights
