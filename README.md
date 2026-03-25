@@ -2,8 +2,9 @@
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
 
 
-  <p>
-    Ask a question and get a research report with sources. No API keys required. Runs on Ollama out of the box.
+ <p>
+    LLMFlow Search turns your question into a search plan, runs it across 9 sources, from DuckDuckGo to ArXiv,<br/>
+    and assembles a markdown report with references. Fully local. Fully yours.
   </p>
 
 
@@ -12,11 +13,7 @@
     <img src="https://img.shields.io/badge/license-MIT-6F8F76" alt="License: MIT"/>
   </p>
 
-  <p>
-    LLMFlow Search turns your question into a search plan,<br/>
-    runs it across 9 sources, from DuckDuckGo to ArXiv,<br/>
-    and assembles a markdown report with references. Fully local. Fully yours.
-  </p>
+ 
 </div>
 
 ## Highlights
