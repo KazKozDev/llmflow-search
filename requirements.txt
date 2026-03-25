@@ -4,6 +4,7 @@ anthropic==0.74.1
 beautifulsoup4==4.14.2
 cachetools==6.2.2
 colorlog==6.10.1
+chardet<6
 fastapi==0.121.3
 httpx==0.28.1
 markdownify==1.2.0

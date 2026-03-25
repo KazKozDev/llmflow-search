@@ -1,27 +1,45 @@
-"""
-Configuration models with Pydantic validation.
-Provides type-safe, validated configuration loading.
-"""
+"""Configuration models with Pydantic validation."""
 
-from pydantic import BaseModel, Field, validator
-from typing import Dict, Optional
 import json
 from pathlib import Path
+from typing import Dict, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class LLMConfig(BaseModel):
     """LLM service configuration."""
-    provider: str = Field(..., description="LLM provider (ollama, openai, gemini, etc.)")
+    provider: str = Field(
+        ...,
+        description="LLM provider (ollama, openai, gemini, etc.)",
+    )
     model: str = Field(..., description="Model name")
-    temperature: float = Field(0.2, ge=0, le=2, description="Sampling temperature")
-    max_tokens: int = Field(4096, gt=0, le=128000, description="Maximum tokens")
+    temperature: float = Field(
+        0.2,
+        ge=0,
+        le=2,
+        description="Sampling temperature",
+    )
+    max_tokens: int = Field(
+        4096,
+        gt=0,
+        le=128000,
+        description="Maximum tokens",
+    )
 
 
 class CacheConfig(BaseModel):
     """Cache configuration."""
     provider: str = Field("sqlite", description="Cache provider")
-    sqlite_path: str = Field("./data/cache.db", description="SQLite database path")
-    ttl_seconds: int = Field(86400, gt=0, description="Time-to-live in seconds")
+    sqlite_path: str = Field(
+        "./data/cache.db",
+        description="SQLite database path",
+    )
+    ttl_seconds: int = Field(
+        86400,
+        gt=0,
+        description="Time-to-live in seconds",
+    )
     compress: bool = Field(True, description="Enable compression")
 
 
@@ -75,27 +93,32 @@ class AppConfig(BaseModel):
     intent_analyzer: IntentAnalyzerConfig
     web_server: Optional[WebServerConfig] = None
 
-    @validator('rate_limits', pre=True)
-    def parse_rate_limits(cls, v):
+    @field_validator("rate_limits", mode="before")
+    @classmethod
+    def parse_rate_limits(cls, value):
         """Convert dict of dicts to dict of RateLimitConfig."""
-        if isinstance(v, dict):
+        if isinstance(value, dict):
             return {
-                key: val if isinstance(val, RateLimitConfig) else RateLimitConfig(**val)
-                for key, val in v.items()
+                key: (
+                    item
+                    if isinstance(item, RateLimitConfig)
+                    else RateLimitConfig(**item)
+                )
+                for key, item in value.items()
             }
-        return v
+        return value
 
     @classmethod
     def from_file(cls, config_path: str = "config.json") -> "AppConfig":
         """
         Load configuration from JSON file with validation.
-        
+
         Args:
             config_path: Path to config.json file
-            
+
         Returns:
             Validated AppConfig instance
-            
+
         Raises:
             FileNotFoundError: If config file doesn't exist
             ValidationError: If config is invalid
@@ -103,17 +126,16 @@ class AppConfig(BaseModel):
         path = Path(config_path)
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
-        
+
         with open(path, 'r') as f:
             data = json.load(f)
-        
+
         return cls(**data)
 
     def model_dump(self) -> dict:
         """Convert config to dictionary (Pydantic v2)."""
         return super().model_dump()
-    
-    # Alias for backward compatibility
+
     def to_dict(self) -> dict:
         """Convert config to dictionary."""
         return self.model_dump()
@@ -133,10 +155,10 @@ DEFAULT_CONFIG = AppConfig(
 def load_config(config_path: str = "config.json") -> AppConfig:
     """
     Load and validate configuration.
-    
+
     Args:
         config_path: Path to config file
-        
+
     Returns:
         Validated AppConfig
     """

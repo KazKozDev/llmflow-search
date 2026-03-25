@@ -1,210 +1,209 @@
-"""
-Tool Usage Tests - Verify agent can use all available tools.
-"""
-import pytest
-import asyncio
-from core.agent_factory import AgentFactory
+"""Unit tests for search-step result handling."""
+
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from core.agent_core import AgentCore
+from core.tools_module import ToolsModule
 
 
-# Test queries designed to trigger specific tools
-TOOL_TEST_QUERIES = {
-    "search_duckduckgo": "What is Python programming language",
-    "search_wikipedia": "Biography of Albert Einstein",
-    "search_arxiv": "Recent machine learning papers on transformers",
-    "search_pubmed": "Medical research on diabetes treatment",
-    "search_gutenberg": "Books by Jane Austen",
-    "search_openstreetmap": "Where is Eiffel Tower located",
-    "search_youtube": "Python tutorial for beginners video",
-    "search_wayback": "Historical versions of google.com website",
-    "search_searxng": "Complex research query about quantum computing applications"
-}
+class FakeMemory:
+    """Minimal memory implementation for tool-handling tests."""
+
+    def __init__(self):
+        self.short_term = []
+        self.links = {}
+
+    def add_to_short_term(self, item):
+        self.short_term.append(item)
+
+    def get_short_term(self):
+        return list(self.short_term)
+
+    def add_to_links(self, url, title):
+        self.links[url] = title
+
+    def get_links(self):
+        return dict(self.links)
+
+    def get_relevant_content(self, _query, max_items=100):
+        return self.short_term[-max_items:]
 
 
-@pytest.mark.asyncio
-async def test_planning_module_understands_queries():
-    """Test that Planning Module (via LLM) understands query intent and selects tools."""
-    from core.planning_module import PlanningModule
-    from core.llm_gateway import LLMGateway
-    from core.llm_service import LLMService
-    from core.config import load_config
-    
-    config = load_config()
-    llm_service = LLMService(config)
-    llm_gateway = LLMGateway(llm_service)
-    planning = PlanningModule(llm_gateway)
-    
-    test_cases = [
-        ("Find ArXiv papers on neural networks", "search_arxiv"),
-        ("Medical research on diabetes", "search_pubmed"),
-        ("Books by Shakespeare", "search_gutenberg"),
-        ("Where is Paris", "search_openstreetmap"),
-        ("Python tutorial video", "search_youtube"),
-    ]
-    
-    results = []
-    for query, expected_tool in test_cases:
-        plan = await planning.create_plan(query)
-        tools_used = [step["type"] for step in plan["steps"]]
-        
-        has_expected = expected_tool in tools_used
-        results.append({
-            "query": query,
-            "expected": expected_tool,
-            "tools_planned": tools_used,
-            "passed": has_expected
-        })
-        
-        if has_expected:
-            print(f"✓ {query} → {expected_tool}")
-        else:
-            print(f"✗ {query} → Expected {expected_tool}, got {tools_used}")
-    
-    # Summary
-    passed = sum(1 for r in results if r["passed"])
-    total = len(results)
-    print(f"\nPlanning Module: {passed}/{total} tests passed")
-    
-    return results
+class ToolUsageTests(unittest.IsolatedAsyncioTestCase):
+    """Verify per-tool result normalization inside AgentCore."""
 
+    def setUp(self):
+        self.memory = FakeMemory()
+        self.tools = MagicMock()
+        self.tools.parse_top_results = 2
+        self.tools.parse_duckduckgo_result = AsyncMock(return_value="parsed")
+        self.llm_service = MagicMock()
+        self.llm_service.generate_response_async = AsyncMock(return_value="NO")
 
-@pytest.mark.asyncio
-async def test_tools_execution():
-    """Test that each tool can execute successfully."""
-    from core.tools_module import ToolsModule
-    from core.memory_module import MemoryModule
-    from core.llm_gateway import LLMGateway
-    from core.llm_service import LLMService
-    from core.config import load_config
-    
-    config = load_config()
-    memory = MemoryModule()
-    llm_service = LLMService(config)
-    llm_gateway = LLMGateway(llm_service)
-    
-    tools = ToolsModule(
-        memory=memory,
-        llm_service=llm_gateway,
-        config=config.model_dump(),
-        max_results=5
-    )
-    
-    results = []
-    for tool_name, query in TOOL_TEST_QUERIES.items():
-        try:
-            result = await tools.execute_tool(tool_name, query=query)
-            
-            # Check if result is valid
-            is_valid = (
-                result and
-                not str(result).startswith("Error") and
-                len(str(result)) > 10
+        self.agent = AgentCore(
+            memory=self.memory,
+            planning=MagicMock(),
+            tools=self.tools,
+            report_generator=MagicMock(),
+            llm_service=self.llm_service,
+            max_iterations=2,
+        )
+        self.agent.current_query = "test query"
+
+    async def test_duckduckgo_results_are_stored_and_linked(self):
+        """DuckDuckGo search should store results and add links."""
+        results = [
+            {
+                "title": "Example result",
+                "url": "https://example.com",
+                "snippet": "Example snippet",
+            }
+        ]
+        self.tools.execute_tool = AsyncMock(return_value=results)
+
+        await self.agent._execute_search_step(
+            {
+                "type": "search_duckduckgo",
+                "query": "example query",
+                "description": "Search web",
+            },
+            {"steps": []},
+        )
+
+        self.assertEqual(
+            self.memory.links["https://example.com"],
+            "Example result",
+        )
+        self.assertTrue(
+            any(
+                item.get("type") == "search_results"
+                for item in self.memory.short_term
             )
-            
-            results.append({
-                "tool": tool_name,
-                "query": query,
-                "passed": is_valid,
-                "result_length": len(str(result)) if result else 0
-            })
-            
-            if is_valid:
-                print(f"✓ {tool_name}: {len(str(result))} chars")
-            else:
-                print(f"✗ {tool_name}: Failed or empty result")
-                
-        except Exception as e:
-            results.append({
-                "tool": tool_name,
-                "query": query,
-                "passed": False,
-                "error": str(e)
-            })
-            print(f"✗ {tool_name}: Exception - {e}")
-    
-    # Summary
-    passed = sum(1 for r in results if r["passed"])
-    total = len(results)
-    print(f"\nTool Execution: {passed}/{total} tools working")
-    
-    return results
+        )
+        self.tools.parse_duckduckgo_result.assert_not_awaited()
 
+    async def test_wikipedia_result_uses_page_metadata(self):
+        """Wikipedia result should add one formatted reference link."""
+        self.tools.execute_tool = AsyncMock(
+            return_value={
+                "page_found": True,
+                "url": "https://en.wikipedia.org/wiki/Test",
+                "title": "Test",
+            }
+        )
 
-@pytest.mark.asyncio
-async def test_agent_integration():
-    """Test that agent actually uses tools during search."""
-    agent = await AgentFactory.create_agent(max_iterations=5)
-    
-    # Test a query that should trigger ArXiv
-    query = "Find 3 recent papers on large language models"
-    report = await agent.process_query(query)
-    
-    # Check memory for tool usage
-    memory_data = agent.memory.get_long_term()
-    tools_used = []
-    
-    for entry in memory_data:
-        if isinstance(entry, dict) and "tools_used" in entry:
-            tools_used.extend(entry["tools_used"])
-    
-    print(f"\nAgent used tools: {tools_used}")
-    print(f"Report length: {len(report)} chars")
-    
-    # Verify ArXiv was used or at least some tool was used
-    assert len(tools_used) > 0, "Agent didn't use any tools!"
-    
-    return {
-        "tools_used": tools_used,
-        "report_length": len(report)
-    }
+        await self.agent._execute_search_step(
+            {
+                "type": "search_wikipedia",
+                "query": "test",
+                "description": "Search Wikipedia",
+            },
+            {"steps": []},
+        )
 
+        self.assertEqual(
+            self.memory.links["https://en.wikipedia.org/wiki/Test"],
+            "Wikipedia: Test",
+        )
 
-async def run_all_tests():
-    """Run all tool tests."""
-    print("=" * 60)
-    print("TOOL USAGE TEST SUITE")
-    print("=" * 60)
-    
-    print("\n1. Testing Query Parser...")
-    await test_query_parser()
-    
-    print("\n2. Testing Planning Module Tool Selection...")
-    planning_results = await test_planning_module_tool_selection()
-    
-    print("\n3. Testing Individual Tool Execution...")
-    execution_results = await test_tools_execution()
-    
-    print("\n4. Testing Agent Integration...")
-    integration_result = await test_agent_integration()
-    
-    print("\n" + "=" * 60)
-    print("TEST SUMMARY")
-    print("=" * 60)
-    
-    # Planning summary
-    planning_passed = sum(1 for r in planning_results if r["passed"])
-    print(f"Planning: {planning_passed}/{len(planning_results)} queries planned correctly")
-    
-    # Execution summary
-    exec_passed = sum(1 for r in execution_results if r["passed"])
-    print(f"Execution: {exec_passed}/{len(execution_results)} tools executed successfully")
-    
-    # Integration
-    print(f"Integration: Agent used {len(integration_result['tools_used'])} tool(s)")
-    
-    return {
-        "planning": planning_results,
-        "execution": execution_results,
-        "integration": integration_result
-    }
+    async def test_generic_tool_results_add_all_links(self):
+        """Generic list results with url and title should be linked."""
+        self.tools.execute_tool = AsyncMock(
+            return_value=[
+                {"title": "Paper A", "url": "https://a.example"},
+                {"title": "Paper B", "url": "https://b.example"},
+            ]
+        )
+
+        await self.agent._execute_search_step(
+            {
+                "type": "search_searxng",
+                "query": "topic",
+                "description": "Meta search",
+            },
+            {"steps": []},
+        )
+
+        self.assertEqual(
+            self.memory.links["https://a.example"],
+            "search_searxng: Paper A",
+        )
+        self.assertEqual(
+            self.memory.links["https://b.example"],
+            "search_searxng: Paper B",
+        )
+
+    async def test_tool_error_is_recorded_in_memory(self):
+        """Tool execution failures should be captured as error items."""
+        self.tools.execute_tool = AsyncMock(side_effect=RuntimeError("boom"))
+
+        await self.agent._execute_search_step(
+            {
+                "type": "search_pubmed",
+                "query": "topic",
+                "description": "Search PubMed",
+            },
+            {"steps": []},
+        )
+
+        errors = [
+            item
+            for item in self.memory.short_term
+            if item.get("type") == "error"
+        ]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["source"], "search_pubmed")
+        self.assertIn("boom", errors[0]["error"])
+
+    async def test_wikipedia_urls_use_wikipedia_api_parser(self):
+        """Wikipedia URLs should be parsed via the Wikipedia tool, not a missing class."""
+        tools_module = ToolsModule(
+            memory=FakeMemory(),
+            llm_service=MagicMock(),
+            config={
+                "cache": {
+                    "provider": "sqlite",
+                    "sqlite_path": ":memory:",
+                },
+                "rate_limits": {"default": {"requests_per_minute": 30}},
+            },
+        )
+        fake_parsing_cache = MagicMock()
+        fake_parsing_cache.get.return_value = None
+
+        with patch(
+            "core.parsing_cache.get_parsing_cache",
+            return_value=fake_parsing_cache,
+        ):
+            with patch(
+                "core.tools.impl_wikipedia.WikipediaTool.get_article_content",
+                new=AsyncMock(return_value={"extract": "Wikipedia content"}),
+            ) as get_article_content:
+                with patch(
+                    "core.tools.async_link_parser.extract_content_from_url_async",
+                    new=AsyncMock(return_value="fallback content"),
+                ) as fallback_parser:
+                    content = await tools_module.parse_duckduckgo_result(
+                        {
+                            "url": (
+                                "https://en.wikipedia.org/wiki/"
+                                "Python_(programming_language)"
+                            )
+                        }
+                    )
+
+        self.assertEqual(content, "Wikipedia content")
+        get_article_content.assert_awaited_once_with(
+            "Python (programming language)",
+            language="en",
+        )
+        fallback_parser.assert_not_awaited()
+        fake_parsing_cache.set.assert_called_once_with(
+            "https://en.wikipedia.org/wiki/Python_(programming_language)",
+            "Wikipedia content",
+        )
 
 
 if __name__ == "__main__":
-    # Run tests
-    results = asyncio.run(run_all_tests())
-    
-    # Save detailed results
-    import json
-    with open("test_results_tools.json", "w") as f:
-        json.dump(results, f, indent=2, default=str)
-    
-    print("\nDetailed results saved to test_results_tools.json")
+    unittest.main()

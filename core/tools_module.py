@@ -9,6 +9,7 @@ import aiohttp
 import asyncio
 import os
 import sys
+from urllib.parse import unquote
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
@@ -149,18 +150,26 @@ class ToolsModule:
         # Check if it's Wikipedia
         if "wikipedia.org" in url:
             # Use Wikipedia API for better results
-            from core.tools.impl_wikipedia import WikipediaToolForLLM
-            wiki_tool = WikipediaToolForLLM()
+            from core.tools.impl_wikipedia import WikipediaTool
+            wiki_tool = WikipediaTool()
             
             try:
                 # Extract article title from URL
                 import re
-                match = re.search(r'/wiki/([^#?]+)', url)
+                match = re.search(
+                    r'https?://([a-z]{2})\.wikipedia\.org/wiki/([^#?]+)',
+                    url,
+                )
                 if match:
-                    title = match.group(1).replace('_', ' ')
-                    content = await wiki_tool.async_get_page_content(title)
+                    language = match.group(1)
+                    title = unquote(match.group(2)).replace('_', ' ')
+                    article = await wiki_tool.get_article_content(
+                        title,
+                        language=language,
+                    )
+                    content = article.get("extract", "")
                     if content:
-                        parsed_content = content[:5000]  # Limit content
+                        parsed_content = content[:5000]
             except Exception as e:
                 self.logger.error(f"Wikipedia parsing error: {e}")
         

@@ -1,407 +1,386 @@
 #!/usr/bin/env python3
-"""
-LLMFlow Search Agent - Planning and Strategy
-Planning Module - Creates and manages search plans for the agent.
-Determines the best search strategies for different queries.
-Integrates with Search Intent Analyzer for optimized query formulation.
-"""
-import logging
+"""Planning and search-strategy generation for the agent."""
+
 import json
-import time
+import logging
 import re
-from typing import Dict, Any, List
+import time
+
 
 class PlanningModule:
+    """Create and revise search plans for research queries."""
+
     def __init__(self, llm_service, search_intent_analyzer=None):
-        """
-        Initialize the planning module.
-        
-        Args:
-            llm_service: LLM service for generating and revising plans
-            search_intent_analyzer: Search Intent Analyzer for optimizing queries (optional)
-        """
+        """Initialize the planning module."""
         self.llm_service = llm_service
         self.search_intent_analyzer = search_intent_analyzer
         self.logger = logging.getLogger(__name__)
-    
+
     def create_plan(self, query):
-        """
-        Create a search plan for the query.
-        
-        Args:
-            query: The user's query
-            
-        Returns:
-            A plan dictionary with search steps
-        """
-        self.logger.info(f"Creating search plan for: {query}")
-        
-        # Use search intent analyzer if available
+        """Create a search plan for the query."""
+        self.logger.info("Creating search plan for: %s", query)
+
         if self.search_intent_analyzer:
-            self.logger.info("Using Search Intent Analyzer for query optimization")
+            self.logger.info(
+                "Using Search Intent Analyzer for query optimization"
+            )
             return self._create_intent_based_plan(query)
-        else:
-            self.logger.info("Using standard planning approach")
-            return self._create_standard_plan(query)
-    
+
+        self.logger.info("Using standard planning approach")
+        return self._create_standard_plan(query)
+
     def _create_intent_based_plan(self, query):
-        """
-        Create a search plan using the Search Intent Analyzer.
-        
-        Args:
-            query: The user's query
-            
-        Returns:
-            A plan dictionary with optimized search steps
-        """
-        # Analyze the search intent
+        """Create a search plan using the Search Intent Analyzer."""
         intent_analysis = self.search_intent_analyzer.analyze_intent(query)
-        
-        # Create a structured plan
+
         plan = {
             "query": query,
             "created_at": time.time(),
             "intent_analysis": {
-                "interpretation": intent_analysis.get("intent_interpretation", ""),
+                "interpretation": intent_analysis.get(
+                    "intent_interpretation", ""
+                ),
                 "categories": intent_analysis.get("intent_categories", []),
                 "entities": intent_analysis.get("entities", []),
-                "time_sensitive": intent_analysis.get("time_sensitivity", {}).get("is_sensitive", False)
+                "time_sensitive": intent_analysis.get(
+                    "time_sensitivity", {}
+                ).get("is_sensitive", False),
             },
-            "steps": []
+            "steps": [],
         }
-        
-        # Add DuckDuckGo search steps using Google query optimizations
+
         google_query = intent_analysis.get("google_query", {})
         main_query = google_query.get("main_query", query)
-        
-        # Add main query search
-        plan["steps"].append({
-            "type": "search_duckduckgo",
-            "query": main_query,
-            "description": f"Search DuckDuckGo for optimized query: {main_query}"
-        })
-        
-        # Add alternative query searches
-        for alt_query in google_query.get("alternative_queries", [])[:2]:  # Limit to 2 alternatives
+
+        plan["steps"].append(
+            {
+                "type": "search_duckduckgo",
+                "query": main_query,
+                "description": (
+                    f"Search DuckDuckGo for optimized query: {main_query}"
+                ),
+            }
+        )
+
+        for alt_query in google_query.get("alternative_queries", [])[:2]:
             if alt_query and alt_query != main_query:
-                plan["steps"].append({
-                    "type": "search_duckduckgo",
-                    "query": alt_query,
-                    "description": f"Search DuckDuckGo for alternative query: {alt_query}"
-                })
-        
-        # Add specialized tool searches based on recommendations
+                plan["steps"].append(
+                    {
+                        "type": "search_duckduckgo",
+                        "query": alt_query,
+                        "description": (
+                            "Search DuckDuckGo for alternative query: "
+                            f"{alt_query}"
+                        ),
+                    }
+                )
+
         recommended_tools = intent_analysis.get("recommended_tools", [])
         tool_queries = intent_analysis.get("tool_queries", {})
-        
+
         for tool_name in recommended_tools:
-            # Skip DuckDuckGo and Wikipedia as they're handled separately
             if tool_name in ["search_duckduckgo", "search_wikipedia"]:
                 continue
-            
+
             if tool_name in tool_queries and tool_queries[tool_name]:
-                plan["steps"].append({
-                    "type": tool_name,
-                    "query": tool_queries[tool_name],
-                    "description": f"Search {tool_name.replace('search_', '')} for: {tool_queries[tool_name]}"
-                })
-        
-        # Add Wikipedia search using optimized Wikipedia query
+                plan["steps"].append(
+                    {
+                        "type": tool_name,
+                        "query": tool_queries[tool_name],
+                        "description": (
+                            f"Search {tool_name.replace('search_', '')} for: "
+                            f"{tool_queries[tool_name]}"
+                        ),
+                    }
+                )
+
         wikipedia_query = intent_analysis.get("wikipedia_query", {})
         main_article = wikipedia_query.get("main_article", "")
-        
+
         if main_article:
-            plan["steps"].append({
-                "type": "search_wikipedia",
-                "query": main_article,
-                "description": f"Search Wikipedia for: {main_article}"
-            })
-        
-        # Add searches for related categories from Wikipedia (limit to 1)
+            plan["steps"].append(
+                {
+                    "type": "search_wikipedia",
+                    "query": main_article,
+                    "description": f"Search Wikipedia for: {main_article}",
+                }
+            )
+
         for category in wikipedia_query.get("related_categories", [])[:1]:
             if category:
-                plan["steps"].append({
-                    "type": "search_wikipedia",
-                    "query": category,
-                    "description": f"Search Wikipedia for related category: {category}"
-                })
-        
-        self.logger.info(f"Created intent-based plan with {len(plan['steps'])} steps")
+                plan["steps"].append(
+                    {
+                        "type": "search_wikipedia",
+                        "query": category,
+                        "description": (
+                            "Search Wikipedia for related category: "
+                            f"{category}"
+                        ),
+                    }
+                )
+
+        self.logger.info(
+            "Created intent-based plan with %s steps", len(plan["steps"])
+        )
         return plan
-    
+
     def _create_standard_plan(self, query):
-        """
-        Create a standard search plan without the intent analyzer.
-        This is the original planning logic.
-        
-        Args:
-            query: The user's query
-            
-        Returns:
-            A plan dictionary with search steps
-        """
-        # Enhanced system message with tool descriptions
-        system_message = f"""
-        You are an advanced search planning AI. Your task is to create an efficient search plan.
-        
+        """Create a standard search plan without the intent analyzer."""
+        system_message = """
+        You are an advanced search planning AI. Your task is to create an
+        efficient search plan.
+
         AVAILABLE TOOLS:
-        1. search_arxiv - Scientific papers from ArXiv (ML, physics, computer science)
+        1. search_arxiv - Scientific papers from ArXiv (ML, physics,
+           computer science)
         2. search_pubmed - Medical/biological research papers
         3. search_gutenberg - Classic literature and books
         4. search_youtube - Video tutorials and lectures
         5. search_openstreetmap - Geographic locations and map data
         6. search_wayback - Historical website versions from Internet Archive
-        7. search_wikipedia - Encyclopedia articles for background information
+        7. search_wikipedia - Encyclopedia articles for background
+           information
         8. search_duckduckgo - General web search
         9. search_searxng - Meta-search engine for comprehensive web results
-        
+
         TOOL SELECTION GUIDELINES:
-        - For "papers", "research", "articles", "studies" → use search_arxiv or search_pubmed
-        - For "100 papers on X" → use specialized tool (ArXiv/PubMed) which can handle bulk requests
-        - For "medical", "disease", "treatment" → use search_pubmed
-        - For "books", "literature", "novels" → use search_gutenberg
-        - For "video", "tutorial", "how to" → use search_youtube
-        - For "location", "where is", "map" → use search_openstreetmap
-        - For "history of website" → use search_wayback
-        - For background/overview → use search_wikipedia
-        - For general queries → use search_duckduckgo
-        
-        IMPORTANT: If user asks for many results (e.g., "100 papers"), choose the SPECIALIZED tool
-        (ArXiv for science, PubMed for medicine) as they support bulk queries.
-        
+        - For "papers", "research", "articles", "studies" use search_arxiv
+          or search_pubmed
+        - For "100 papers on X" use a specialized tool (ArXiv/PubMed) which
+          can handle bulk requests
+        - For "medical", "disease", "treatment" use search_pubmed
+        - For "books", "literature", "novels" use search_gutenberg
+        - For "video", "tutorial", "how to" use search_youtube
+        - For "location", "where is", "map" use search_openstreetmap
+        - For "history of website" use search_wayback
+        - For background/overview use search_wikipedia
+        - For general queries use search_duckduckgo
+
+        IMPORTANT: If the user asks for many results, choose the specialized
+        tool that can handle bulk queries.
+
         Your response must be ONLY valid JSON with this structure:
-        {{
+        {
             "main_keywords": ["primary search terms"],
             "wikipedia_topics": ["background topics for context"],
             "alternative_keywords": [],
             "subtopics": []
-        }}
-        
-        Limit each category to 1-2 items to create a focused and efficient search plan.
+        }
+
+        Limit each category to 1-2 items to create a focused and efficient
+        search plan.
         """
-        
-        # Enhanced prompt for creating a plan
+
         prompt = f"""
         Create an efficient search plan for the query: "{query}"
-        
+
         Consider:
         1. The main keywords to search for directly
         2. Wikipedia topics that would provide good background information
-        3. Alternative keywords or phrasings that might yield different results
+        3. Alternative keywords or phrasings that might yield different
+           results
         4. Specific subtopics worth exploring separately
-        
-        Ensure your plan is comprehensive but focused, with 1-2 items per category.
+
+        Ensure your plan is comprehensive but focused, with 1-2 items per
+        category.
         """
-        
-        # Use LLM to create a search plan
-        search_plan_response = self.llm_service.generate_response(prompt, system_message)
-        
-        # Parse the response with improved error handling
+
+        search_plan_response = self.llm_service.generate_response(
+            prompt, system_message
+        )
         search_plan = self._extract_search_plan(search_plan_response, query)
-        
-        # Create a structured plan with steps
+
         plan = {
             "query": query,
             "created_at": time.time(),
-            "steps": []
+            "steps": [],
         }
-        
-        # Add DuckDuckGo search for main keywords
+
         for keywords in search_plan.get("main_keywords", [query]):
-            plan["steps"].append({
-                "type": "search_duckduckgo",
-                "query": keywords,
-                "description": f"Search DuckDuckGo for: {keywords}"
-            })
-        
-        # Add Wikipedia searches
+            plan["steps"].append(
+                {
+                    "type": "search_duckduckgo",
+                    "query": keywords,
+                    "description": f"Search DuckDuckGo for: {keywords}",
+                }
+            )
+
         for topic in search_plan.get("wikipedia_topics", []):
-            plan["steps"].append({
-                "type": "search_wikipedia",
-                "query": topic,
-                "description": f"Search Wikipedia for: {topic}"
-            })
-        
-        # Add searches for alternative keywords
+            plan["steps"].append(
+                {
+                    "type": "search_wikipedia",
+                    "query": topic,
+                    "description": f"Search Wikipedia for: {topic}",
+                }
+            )
+
         for alt_keywords in search_plan.get("alternative_keywords", []):
-            plan["steps"].append({
-                "type": "search_duckduckgo",
-                "query": alt_keywords,
-                "description": f"Search DuckDuckGo for alternative keywords: {alt_keywords}"
-            })
-        
-        # Add searches for subtopics
+            plan["steps"].append(
+                {
+                    "type": "search_duckduckgo",
+                    "query": alt_keywords,
+                    "description": (
+                        "Search DuckDuckGo for alternative keywords: "
+                        f"{alt_keywords}"
+                    ),
+                }
+            )
+
         for subtopic in search_plan.get("subtopics", []):
-            plan["steps"].append({
-                "type": "search_duckduckgo",
-                "query": f"{query} {subtopic}",
-                "description": f"Search for subtopic: {subtopic}"
-            })
-        
-        self.logger.info(f"Created plan with {len(plan['steps'])} steps")
+            plan["steps"].append(
+                {
+                    "type": "search_duckduckgo",
+                    "query": f"{query} {subtopic}",
+                    "description": f"Search for subtopic: {subtopic}",
+                }
+            )
+
+        self.logger.info("Created plan with %s steps", len(plan["steps"]))
         return plan
 
     def revise_plan(self, plan, memory, current_step):
-        """
-        Revise the search plan based on results.
-        
-        Args:
-            plan: Current search plan
-            memory: Short-term memory items
-            current_step: The step that was just executed
-            
-        Returns:
-            Updated plan
-        """
+        """Revise the search plan based on the latest search results."""
         self.logger.info("Revising search plan based on results")
-        
-        # For DuckDuckGo searches, generate follow-up searches based on results
+
         if current_step["type"] == "search_duckduckgo":
-            # Find the search results for the current step
             search_results = None
+            expected_sources = {
+                current_step["type"],
+                current_step["type"].replace("search_", "", 1),
+            }
             for item in reversed(memory):
-                if (item.get("type") == "search_results" and 
-                    item.get("source") == "duckduckgo" and 
-                    item.get("query") == current_step["query"]):
+                if (
+                    item.get("type") == "search_results"
+                    and item.get("source") in expected_sources
+                    and item.get("query") == current_step["query"]
+                ):
                     search_results = item
                     break
-            
+
             if not search_results or not search_results.get("results"):
                 self.logger.warning("No search results found for revision")
                 return plan
-            
-            # Generate follow-up searches using the LLM
+
             system_message = """
-            You are a research assistant identifying follow-up searches based on initial results.
-            You MUST respond with valid JSON in the exact format specified below:
+            You are a research assistant identifying follow-up searches based
+            on initial results.
+            You MUST respond with valid JSON in the exact format specified
+            below:
             {
                 "follow_up_searches": ["search query 1", "search query 2"]
             }
-            
+
             Your response should contain ONLY the JSON object, nothing else.
-            Do not include any explanations, notes, or additional text outside the JSON structure.
-            The JSON must be properly formatted with double quotes around keys and string values.
-            Limit to 2-3 follow-up searches that are most likely to yield additional relevant information.
+            Do not include any explanations, notes, or additional text outside
+            the JSON structure.
+            The JSON must be properly formatted with double quotes around keys
+            and string values.
+            Limit to 2-3 follow-up searches that are most likely to yield
+            additional relevant information.
             """
-            
-            # Format the results for the prompt
+
             results_text = ""
-            for i, result in enumerate(search_results.get("results", [])[:5]):
-                # Handle different result formats
-                title = result.get('title', '')
-                content = result.get('content', '') or result.get('snippet', '')
-                results_text += f"{i+1}. {title}: {content}\n"
-            
-            # Create the prompt
+            for index, result in enumerate(
+                search_results.get("results", [])[:5]
+            ):
+                title = result.get("title", "")
+                content = result.get("content", "") or result.get(
+                    "snippet", ""
+                )
+                results_text += f"{index + 1}. {title}: {content}\n"
+
             prompt = f"""
-            Based on the following search results for the query "{current_step['query']}":
-            
+            Based on the following search results for the query
+            "{current_step['query']}":
+
             {results_text}
-            
-            Identify 2-3 follow-up search queries that would help gather additional relevant information.
-            Focus on aspects not covered in these results or areas that need deeper exploration.
+
+            Identify 2-3 follow-up search queries that would help gather
+            additional relevant information.
+            Focus on aspects not covered in these results or areas that need
+            deeper exploration.
             """
-            
+
             try:
-                # Generate the response
-                response = self.llm_service.generate_response(prompt, system_message)
-                
-                # Extract follow-up searches with improved extraction
+                response = self.llm_service.generate_response(
+                    prompt, system_message
+                )
                 follow_up_searches = self._extract_follow_up_searches(response)
-                
-                # Add follow-up searches to the plan
+
                 for query in follow_up_searches:
-                    # Don't add duplicate searches
-                    if not any(step["query"] == query for step in plan["steps"]):
-                        plan["steps"].append({
-                            "type": "search_duckduckgo",
-                            "query": query,
-                            "description": f"Follow-up search: {query}"
-                        })
-                        self.logger.info(f"Added follow-up search: {query}")
-                
-            except Exception as e:
-                self.logger.error(f"Error generating follow-up searches: {str(e)}")
-        
+                    if not any(
+                        step["query"] == query for step in plan["steps"]
+                    ):
+                        plan["steps"].append(
+                            {
+                                "type": "search_duckduckgo",
+                                "query": query,
+                                "description": f"Follow-up search: {query}",
+                            }
+                        )
+                        self.logger.info("Added follow-up search: %s", query)
+
+            except Exception as error:
+                self.logger.error(
+                    "Error generating follow-up searches: %s", error
+                )
+
         return plan
-    
+
     def _extract_search_plan(self, response, default_query):
-        """
-        Extract search plan from LLM response with robust error handling.
-        
-        Args:
-            response: LLM response
-            default_query: Default query to use if parsing fails
-            
-        Returns:
-            Parsed search plan
-        """
+        """Extract a search plan from the LLM response."""
         try:
-            # Clean up the response - extract JSON if surrounded by markdown code blocks
             cleaned_response = response.strip()
-            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_response)
+            json_match = re.search(
+                r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_response
+            )
             if json_match:
                 cleaned_response = json_match.group(1).strip()
-            
-            # Parse the search plan JSON
-            search_plan = json.loads(cleaned_response)
-            
-            return search_plan
-            
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Error parsing search plan JSON: {str(e)}")
-            self.logger.debug(f"Raw response: {response}")
-            
-            # Return a basic search plan
+
+            return json.loads(cleaned_response)
+
+        except json.JSONDecodeError as error:
+            self.logger.error("Error parsing search plan JSON: %s", error)
+            self.logger.debug("Raw response: %s", response)
             return {
                 "main_keywords": [default_query],
                 "wikipedia_topics": [default_query],
                 "alternative_keywords": [],
-                "subtopics": []
+                "subtopics": [],
             }
-        
-        except Exception as e:
-            self.logger.error(f"Error in search plan extraction: {str(e)}")
+
+        except Exception as error:
+            self.logger.error("Error in search plan extraction: %s", error)
             return {
                 "main_keywords": [default_query],
                 "wikipedia_topics": [default_query],
                 "alternative_keywords": [],
-                "subtopics": []
+                "subtopics": [],
             }
-    
+
     def _extract_follow_up_searches(self, response):
-        """
-        Extract follow-up searches from LLM response with robust error handling.
-        
-        Args:
-            response: LLM response
-            
-        Returns:
-            List of follow-up search queries
-        """
+        """Extract follow-up searches from the LLM response."""
         try:
-            # Clean up the response - extract JSON if surrounded by markdown code blocks
             cleaned_response = response.strip()
-            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_response)
+            json_match = re.search(
+                r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned_response
+            )
             if json_match:
                 cleaned_response = json_match.group(1).strip()
-            
-            # Parse the follow-up searches JSON
+
             follow_up_data = json.loads(cleaned_response)
-            
-            # Extract the follow-up searches
             follow_up_searches = follow_up_data.get("follow_up_searches", [])
-            
-            # Filter out empty searches and limit to 3
-            follow_up_searches = [q for q in follow_up_searches if q.strip()][:3]
-            
-            return follow_up_searches
-            
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Error parsing follow-up searches JSON: {str(e)}")
-            self.logger.debug(f"Raw response: {response}")
+            return [query for query in follow_up_searches if query.strip()][:3]
+
+        except json.JSONDecodeError as error:
+            self.logger.error(
+                "Error parsing follow-up searches JSON: %s", error
+            )
+            self.logger.debug("Raw response: %s", response)
             return []
-        
-        except Exception as e:
-            self.logger.error(f"Error in follow-up searches extraction: {str(e)}")
+
+        except Exception as error:
+            self.logger.error(
+                "Error in follow-up searches extraction: %s", error
+            )
             return []
