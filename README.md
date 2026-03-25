@@ -3,8 +3,7 @@
 
 
   <p>
-    LLMFlow Search breaks your question into a search plan, runs it across 9 sources from DuckDuckGo to ArXiv,<br/>
-    parses relevant pages and assembles a markdown report with references. All local, all yours.
+    Ask a question and get a research report with sources. No API keys required. Runs on Ollama out of the box.
   </p>
 
 
@@ -13,16 +12,20 @@
     <img src="https://img.shields.io/badge/license-MIT-6F8F76" alt="License: MIT"/>
   </p>
 
-  
+  <p>
+    LLMFlow Search turns your question into a search plan,<br/>
+    runs it across 9 sources, from DuckDuckGo to ArXiv,<br/>
+    and assembles a markdown report with references. Fully local. Fully yours.
+  </p>
 </div>
 
 ## Highlights
 
-- Multi-source search across nine specialized tools
-- CLI and FastAPI interfaces in one codebase
-- Real-time progress streaming over WebSockets
-- Background deep-search jobs with queue tracking
-- Local-first Ollama default with provider flexibility
+- 9 integrated search sources in one pipeline
+- Ollama-first setup with no API key required
+- CLI, FastAPI, and WebSocket interfaces
+- SQLite cache, rate limits, and background jobs
+- Markdown reports with references and live progress
 
 ## Demo
 
@@ -36,9 +39,9 @@
 
 ## Why
 
-ChatGPT, Claude, and Gemini all have deep research workflows, but they are tied to their API, their search stack, and their pricing. Swap the model and you have to rework the pipeline. Add a source like PubMed and you are back in implementation details instead of research.
+ChatGPT, Claude, and Gemini all offer deep research workflows, but they are tightly coupled to their own APIs, search stacks, and pricing models. If you want to swap the model, you end up reworking the pipeline. If you want to add a source like PubMed, you are back to implementation details instead of actual research.
 
-LLMFlow Search keeps the same overall pipeline, but the LLM provider and search sources live in configuration instead of hardcoded integrations. You can run Ollama locally, switch to OpenAI in the cloud, or plug in your own SearXNG instance through one entry point.
+LLMFlow Search keeps the same overall workflow, but the LLM provider and search sources are configured rather than hardcoded. You can run Ollama locally, switch to OpenAI in the cloud, or plug in your own SearXNG instance through the same entry point.
 
 ## What's Inside
 
@@ -107,18 +110,58 @@ python main.py --output reports/report.md --max-iterations 10
 
 Detailed setup notes are in [docs/setup.md](docs/setup.md).
 
-## Usage
+## Configuration
 
-Run the web interface:
+The runtime is configured through `config.json`, with provider secrets and host overrides coming from environment variables.
 
-```bash
-python web_server.py
+Minimal local setup with Ollama:
+
+```json
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "qwen3:8b",
+    "temperature": 0.2,
+    "max_tokens": 4096
+  },
+  "search": {
+    "max_results": 5,
+    "parse_top_results": 3,
+    "use_selenium": true,
+    "use_cache": true
+  }
+}
 ```
 
-Run the CLI and save the generated markdown report:
+Environment variables:
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `OLLAMA_HOST` | Using Ollama on a non-default host | Points the app to your Ollama server |
+| `OPENAI_API_KEY` | `provider: openai` | Enables OpenAI-backed runs |
+| `ANTHROPIC_API_KEY` | `provider: anthropic` | Enables Anthropic-backed runs |
+| `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `provider: gemini` | Enables Gemini-backed runs |
+
+Provider switching is done by changing `llm.provider` and `llm.model` in `config.json`; the rest of the pipeline stays the same.
+
+## Usage
+
+Interactive CLI run:
 
 ```bash
 python main.py --output reports/report.md --verbose --max-iterations 12
+```
+
+Example prompt:
+
+```text
+Compare small language models suitable for offline document search on a Mac.
+```
+
+Run the web interface locally:
+
+```bash
+python web_server.py
 ```
 
 Start the containerized environment:
@@ -126,6 +169,16 @@ Start the containerized environment:
 ```bash
 docker compose up --build
 ```
+
+Trigger a standard web/API session:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Find recent papers on local RAG evaluation","max_iterations":10,"mode":"standard"}'
+```
+
+The API returns a `session_id`, and progress then streams over `WS /ws/search/{session_id}`.
 
 ## API Overview
 
@@ -167,8 +220,10 @@ docker-compose.yml # Container orchestration
 
 Stage: Experimental
 
-Planned:
-- TODO: define public roadmap items
+Current state:
+- Local-first Ollama workflow works out of the box.
+- CLI, web UI, WebSocket streaming, and background deep-search jobs are available.
+- Interfaces, configuration details, and tool coverage may still evolve as the project hardens.
 
 ## Testing
 
