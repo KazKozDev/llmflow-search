@@ -2,7 +2,7 @@
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
 
   <p>
-    Local-first research agent that orchestrates multi-source web search with iterative query refinement to produce citation-backed reports, all in one workflow, powered by local LLM.
+    Ask a question -> get a research report with sources. No API keys required - runs on Ollama out of the box.
   </p>
 
   <p>
@@ -10,6 +10,10 @@
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"/>
   </p>
 </div>
+
+# LLMFlow Search
+
+LLMFlow Search breaks your question into a search plan, runs it across 9 sources from DuckDuckGo to ArXiv, parses relevant pages, and assembles a markdown report with references. All local, all yours.
 
 ## Highlights
 
@@ -29,25 +33,17 @@
   <img width="800" src="https://github.com/user-attachments/assets/ac89e2ff-4bc3-401a-a514-e645fd093465" alt="LLMFlow Search report preview" />
 </p>
 
-## Overview
+## Why
 
-LLMFlow Search is a Python research assistant that turns a free-form question into a search plan, executes searches across web and domain-specific sources, parses selected links, and writes a markdown report with references. It is built for users who need local or self-hosted research workflows without being locked to a single search endpoint or a single LLM provider.
+ChatGPT, Claude, and Gemini all have deep research workflows, but they are tied to their API, their search stack, and their pricing. Swap the model and you have to rework the pipeline. Add a source like PubMed and you are back in implementation details instead of research.
 
-## Motivation
+LLMFlow Search keeps the same overall pipeline, but the LLM provider and search sources live in configuration instead of hardcoded integrations. You can run Ollama locally, switch to OpenAI in the cloud, or plug in your own SearXNG instance through one entry point.
 
-Research workflows often break down in one of three ways: generic web search lacks synthesis, hosted LLM workflows require external APIs, and single-provider assistants limit how results are gathered. LLMFlow Search addresses that gap by combining local-first Ollama support with multi-tool retrieval and report generation in one stack. In its current shape, it is positioned against OpenAI-backed research workflows, Anthropic-backed research workflows, and Gemini-backed research workflows by keeping provider choice in configuration instead of hardwiring a managed service.
+## What's Inside
 
-## Features
-
-- Query planning with iterative plan revision
-- Search intent analysis for alternate query paths
-- Search tools for DuckDuckGo, Wikipedia, SearXNG, ArXiv, PubMed, YouTube, Gutenberg, OpenStreetMap, and Wayback
-- Cached tool execution with SQLite-backed storage
-- Rate limiting per search source
-- WebSocket progress events for live UI updates
-- Background job queue for deep-search sessions
-- Metrics endpoint for system and LLM telemetry
-- Markdown report generation with linked sources
+- Pipeline: builds a search plan, revises it on the fly, explores alternate query paths, runs parallel search across sources, parses results, and generates a report.
+- 9 sources: DuckDuckGo, Wikipedia, SearXNG, ArXiv, PubMed, YouTube, Gutenberg, OpenStreetMap, and Wayback.
+- Infrastructure: SQLite cache, per-source rate limiting, background job queue, WebSocket live progress, and metrics endpoint for system and LLM telemetry.
 
 ## Architecture
 
