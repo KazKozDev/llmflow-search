@@ -1,12 +1,16 @@
-<p align="center">
+<div align="center">
   <img src="web/static/logo.png" alt="LLMFlow Search Logo" width="400"/>
-</p>
 
+  <h1>LLMFlow Search</h1>
+  <p>
+    Local-first research agent that orchestrates multi-source web search with iterative query refinement to produce citation-backed reports, all in one workflow, powered by local LLM.
+  </p>
 
-Local research agent for multi-source web search and cited reports.
-
-![Status: Experimental](https://img.shields.io/badge/status-experimental-orange)
-![License: MIT](https://img.shields.io/badge/license-MIT-green)
+  <p>
+    <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status: Experimental"/>
+    <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"/>
+  </p>
+</div>
 
 ## Highlights
 
