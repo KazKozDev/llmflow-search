@@ -6,8 +6,8 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status: Experimental"/>
-    <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"/>
+    <img src="https://img.shields.io/badge/status-experimental-8A7F6B" alt="Status: Experimental"/>
+    <img src="https://img.shields.io/badge/license-MIT-6F8F76" alt="License: MIT"/>
   </p>
 
   <p>
