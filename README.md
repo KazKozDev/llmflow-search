@@ -3,7 +3,7 @@
 
 
  <p>
-    LLMFlow Search turns your question into a search plan, runs it across 9 sources, from DuckDuckGo to ArXiv,<br/>
+    Turns your question into a search plan, runs it across 9 sources, from DuckDuckGo to ArXiv,<br/>
     and assembles a markdown report with references. Fully local. Fully yours.
   </p>
 
