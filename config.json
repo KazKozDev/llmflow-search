@@ -32,7 +32,8 @@
         "max_results": 5,
         "parse_top_results": 3,
         "use_selenium": true,
-        "use_cache": true
+        "use_cache": true,
+        "searxng_tavily_fallback": true
     },
     "memory": {
         "path": "./memory",

@@ -54,6 +54,7 @@ class SearchConfig(BaseModel):
     parse_top_results: int = Field(3, gt=0, le=10)
     use_selenium: bool = Field(True)
     use_cache: bool = Field(True)
+    searxng_tavily_fallback: bool = Field(False)
 
 
 class MemoryConfig(BaseModel):

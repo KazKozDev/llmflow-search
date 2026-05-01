@@ -1,7 +1,12 @@
+import json
+import os
+import logging
 import aiohttp
 from typing import Any, Dict, List
 from .base import BaseTool
 from .tool_utils import retry_with_backoff, format_error, measure_time, DEFAULT_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 class SearXNGTool(BaseTool):
     """Tool for searching via SearXNG with timeout and retry."""
@@ -62,4 +67,25 @@ class SearXNGTool(BaseTool):
             return normalized_results
             
         except Exception as e:
+            # Attempt Tavily fallback if configured and API key is available
+            if os.environ.get("TAVILY_API_KEY") and self._is_tavily_fallback_enabled():
+                logger.warning(
+                    f"SearXNG failed for query '{query}', falling back to Tavily: {e}"
+                )
+                try:
+                    from .tool_tavily import TavilyTool
+                    tavily_tool = TavilyTool()
+                    return await tavily_tool.execute(query=query, limit=limit, **kwargs)
+                except Exception as tavily_err:
+                    logger.error(f"Tavily fallback also failed: {tavily_err}")
             return format_error(e, "SearXNG", query)
+
+    @staticmethod
+    def _is_tavily_fallback_enabled() -> bool:
+        """Check config.json for searxng_tavily_fallback flag."""
+        try:
+            with open("config.json", "r") as f:
+                config = json.load(f)
+            return config.get("search", {}).get("searxng_tavily_fallback", False)
+        except Exception:
+            return False
