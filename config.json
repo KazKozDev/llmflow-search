@@ -24,11 +24,15 @@
         "search_arxiv": {
             "requests_per_minute": 10
         },
+        "search_tavily": {
+            "requests_per_minute": 20
+        },
         "default": {
             "requests_per_minute": 30
         }
     },
     "search": {
+        "tavily_api_key": "",
         "max_results": 5,
         "parse_top_results": 3,
         "use_selenium": true,

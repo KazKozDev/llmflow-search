@@ -29,6 +29,11 @@ from core.tools.tool_youtube import YouTubeTool
 from core.tools.tool_gutenberg import GutenbergTool
 from core.tools.tool_pubmed import PubMedTool
 
+# Conditionally import TavilyTool when API key is available
+_tavily_available = bool(os.environ.get("TAVILY_API_KEY"))
+if _tavily_available:
+    from core.tools.tool_tavily import TavilyTool
+
 class ToolsModule:
     def __init__(self, memory, llm_service, config: dict, max_results=5, 
                  safe_search=True, parse_top_results=3):
@@ -79,6 +84,8 @@ class ToolsModule:
         self.register_tool(YouTubeTool())
         self.register_tool(GutenbergTool())
         self.register_tool(PubMedTool())
+        if _tavily_available:
+            self.register_tool(TavilyTool())
         
     def register_tool(self, tool: BaseTool):
         """Register a tool."""
