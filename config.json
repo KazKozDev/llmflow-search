@@ -33,7 +33,7 @@
         "parse_top_results": 3,
         "use_selenium": true,
         "use_cache": true,
-        "searxng_tavily_fallback": true
+        "searxng_tavily_fallback": false
     },
     "memory": {
         "path": "./memory",
