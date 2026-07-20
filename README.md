@@ -1,6 +1,6 @@
 <p align="center">
   <br>
-  <img src="assets/images/llmflow.png" alt="Local Deep Research" width="65%">
+  <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
   <br><br>
 </p>
 
