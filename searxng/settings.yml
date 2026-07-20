@@ -1,0 +1,33 @@
+use_default_settings: true
+
+general:
+  instance_name: "Local Deep Research Search"
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: "0.0.0.0"
+  limiter: false
+  image_proxy: false
+  secret_key: "local-deep-research-searxng-not-public"
+
+# Extra engines beyond the default four (brave/duckduckgo/google/startpage), which all
+# rate-limit or CAPTCHA aggressively when a research run issues many queries. A wider,
+# more independent pool keeps searches working while individual engines cool down.
+engines:
+  # bing is disabled: the scraper returns unrelated pages (stock tickers, social sites)
+  # for non-English queries, polluting the fetch queue.
+  - name: bing
+    disabled: true
+  - name: mojeek
+    disabled: false
+  # qwant is disabled: its results for non-English queries are dominated by SEO spam
+  # pages with gibberish titles that mirror the query.
+  - name: qwant
+    disabled: true
+  - name: wikipedia
+    disabled: false

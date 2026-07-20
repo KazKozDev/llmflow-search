@@ -1,0 +1,56 @@
+models:
+  analyzer: ornith:9b
+  planner: ornith:9b
+  researcher: ornith:9b
+  fact_checker: ornith:9b
+  writer: ornith:9b
+
+ollama:
+  base_url: http://localhost:11434
+  timeout_seconds: 600
+  max_parallel_requests: 2
+  # keep_alive=-1 keeps the model resident between requests (avoids reload-induced timeouts).
+  keep_alive: -1
+  # Retry transient timeouts/network errors before giving up on a request.
+  max_retries: 3
+  # Hard cap on generated tokens per response — stops schema-constrained generation loops.
+  num_predict: 8192
+  # For thinking models (qwen3 family etc.): thinking tokens are unconstrained by the JSON
+  # schema and can loop for thousands of tokens. false disables thinking; remove the line
+  # entirely for models that do not support the parameter.
+  think: false
+
+search:
+  provider: searxng
+  # Optional: fall back to footnote-mcp when SearXNG errors or returns no results
+  # (rate-limited/CAPTCHAed engines). Also used to fetch pages the built-in fetcher
+  # cannot read (PDFs, JS-rendered pages). Remove if footnote-mcp is not installed.
+  fallback_provider: footnote_mcp
+  base_url: http://localhost:8080
+  language: all
+  max_results_per_query: 8
+  footnote:
+    # footnote-mcp is installed separately from this project.
+    command: /Users/artemk/projects/footnote-mcp/.venv/bin/footnote-mcp
+    args: []
+    provider: auto
+    semantic_rerank: false
+
+runtime:
+  max_research_workers: 3
+  max_parallel_fetches: 6
+  max_research_rounds: 3
+  fact_check_batch_size: 3
+
+budgets:
+  max_total_searches: 30
+  max_total_pages: 20
+  max_wall_time_minutes: 20
+  max_retries_per_operation: 2
+  max_duplicate_queries: 2
+
+output:
+  # Every completed run's report is also saved here as a formatted PDF.
+  reports_dir: reports
+  # Letterhead logo shown top-left on the PDF; empty string disables it.
+  logo_path: assets/images/llmflow.png

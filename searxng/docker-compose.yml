@@ -1,0 +1,14 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: local-deep-research-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+      - ./data:/var/cache/searxng
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_LIMITER: "false"
+      FORCE_OWNERSHIP: "true"

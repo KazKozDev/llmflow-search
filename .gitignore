@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local config — machine-specific paths (e.g. footnote-mcp install location);
+# copy config.example.yaml to config.yaml instead of committing it.
+config.yaml
+
+# Runtime data and generated artifacts
+data/
+*.sqlite3
+reports/
+searxng/data/
+benchmarks/results/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
+
+# Env files
+.env
+.env.*

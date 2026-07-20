@@ -1,0 +1,2 @@
+{"case_id":"searxng-json-api","query":"What response formats does SearXNG support? Use official SearXNG documentation.","expected_keywords":["json"],"required_source_domains":["docs.searxng.org"],"min_citations":1}
+{"case_id":"ornith-ollama","query":"What are the parameter count and quantization of ornith:9b? Use the official Ollama model page.","expected_keywords":["9"],"required_source_domains":["ollama.com"],"min_citations":1}
