@@ -8,16 +8,16 @@
 
 The idea was to build a Deep Research pipeline that runs entirely on a local LLM instead of a cloud model.
 
-A local, evidence-first deep-research CLI: it runs `ornith:9b` through Ollama, searches a local SearXNG instance, splits the question into parallel research tasks, and writes every claim to a SQLite evidence store before a fact checker is allowed to touch it. The report can only cite sources that made it through that store — the model never gets to assert a fact straight from a search snippet.
+A local, evidence-first, multi-agent deep-research CLI: it runs `ornith:9b` through Ollama, splits the question into parallel research tasks handled by separate agents, searches a local SearXNG instance, and writes every claim to a SQLite evidence store before a fact checker is allowed to touch it. The report can only cite sources that made it through that store — the model never gets to assert a fact straight from a search snippet.
 
 ```text
 question
-  → planner (up to 3 tasks)
-        ├─ research worker → SearXNG search + page reading ─┐
-        ├─ research worker → SearXNG search + page reading ─┼→ SQLite evidence store
-        └─ research worker → SearXNG search + page reading ─┘
-  → fact checker (verified / conflicting / insufficient / rejected)
-  → Markdown + PDF report, citations validated against the store
+  → planner agent (up to 3 tasks)
+  → 3 parallel research agents → SearXNG search + page reading
+  → SQLite evidence store
+  → fact-checking agent (verified / conflicting / insufficient / rejected)
+  → writer agent → Markdown + PDF report
+  → citation validator → citations checked against the store
 ```
 
 That ordering is the whole design priority: extraction is separated from verification, and the writer is confined to sources it can prove came from a stored, cited page. The orchestrator-workers architecture and role split are adapted from Anthropic's own published research on multi-agent systems — see the references at the end of this README.
@@ -88,7 +88,7 @@ Every role is a separate task with its own prompt, but by default all of them ca
 - the fact checker assigns each statement `verified`, `conflicting`, `insufficient`, or `rejected`;
 - the report only admits verified evidence with `source_quality >= 0.65` ([`orchestrator.py:24`](src/deep_research/orchestrator.py:24)), unless a claim has independent corroboration;
 - the writer may only reference sources already admitted into the evidence store for that research ID;
-- the validator rewrites internal citation markers into real Markdown links and rejects any citation it can't resolve to a stored source ([`citations.py`](src/deep_research/citations.py)).
+- the citation validator — deterministic code, no LLM call — rewrites internal citation markers into real Markdown links and rejects any citation it can't resolve to a stored source ([`citations.py`](src/deep_research/citations.py)).
 
 Terminal progress during a run:
 
