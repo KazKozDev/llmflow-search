@@ -2,7 +2,7 @@
   <br>
   <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
   <br><br>
-  <strong>Deep Research on a local model — every claim traced to its source.</strong>
+  <strong>Deep Research on a local model — every claim traced to its source</strong>
   <br><br>
 </p>
 
