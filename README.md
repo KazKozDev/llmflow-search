@@ -1,5 +1,7 @@
 <p align="center">
+  <br>
   <img src="assets/images/llmflow.png" alt="Local Deep Research" width="65%">
+  <br><br>
 </p>
 
 The idea was to build a Deep Research pipeline that runs entirely on a local LLM, following Anthropic's own blueprint for multi-agent research systems instead of a cloud model.
@@ -197,4 +199,10 @@ SearXNG is a metasearch layer: results depend on the availability and quality of
 
 ## License
 
-[MIT](LICENSE)
+MIT — see [LICENSE](LICENSE)
+
+If you like this project, please give it a star ⭐
+
+For questions, feedback, or support, reach out to:
+
+[LinkedIn](https://www.linkedin.com/in/kazkozdev/) · [Email](mailto:KazKozDev@gmail.com)
