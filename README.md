@@ -2,6 +2,8 @@
   <br>
   <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
   <br><br>
+  <strong>Deep Research on a local model — every claim traced to its source.</strong>
+  <br><br>
 </p>
 
 The idea was to build a Deep Research pipeline that runs entirely on a local LLM, following Anthropic's own blueprint for multi-agent research systems instead of a cloud model.
