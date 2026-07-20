@@ -6,7 +6,7 @@
   <br><br>
 </p>
 
-The idea was to build a Deep Research pipeline that runs entirely on a local LLM, following Anthropic's own blueprint for multi-agent research systems instead of a cloud model.
+The idea was to build a Deep Research pipeline that runs entirely on a local LLM instead of a cloud model.
 
 A local, evidence-first deep-research CLI: it runs `ornith:9b` through Ollama, searches a local SearXNG instance, splits the question into parallel research tasks, and writes every claim to a SQLite evidence store before a fact checker is allowed to touch it. The report can only cite sources that made it through that store — the model never gets to assert a fact straight from a search snippet.
 
@@ -19,9 +19,7 @@ question
   → Markdown + PDF report, citations validated against the store
 ```
 
-That ordering is the whole design priority: extraction is separated from verification, and the writer is confined to sources it can prove came from a stored, cited page.
-
-The orchestrator-workers architecture, the planner/researcher/writer role split, and the effort-scales-with-query-complexity approach are adapted from Anthropic's own published research on multi-agent systems and agent design — see the references at the end of this README.
+That ordering is the whole design priority: extraction is separated from verification, and the writer is confined to sources it can prove came from a stored, cited page. The orchestrator-workers architecture and role split are adapted from Anthropic's own published research on multi-agent systems — see the references at the end of this README.
 
 ## Installation
 
@@ -106,11 +104,7 @@ Copy [config.example.yaml](config.example.yaml) to `config.yaml` on first run (t
 
 ```yaml
 models:
-  analyzer: ornith:9b
-  planner: ornith:9b
-  researcher: ornith:9b
-  fact_checker: ornith:9b
-  writer: ornith:9b
+  analyzer: ornith:9b   # same model for all five roles by default: planner, researcher, fact_checker, writer
 
 ollama:
   keep_alive: -1        # keep the model resident between requests
@@ -130,9 +124,7 @@ output:
   logo_path: assets/images/llmflow.png
 ```
 
-SearXNG is the default search provider; its Docker Compose file is [searxng/docker-compose.yml](searxng/docker-compose.yml) and the JSON API is enabled in [searxng/settings.yml](searxng/settings.yml).
-
-`footnote-mcp` can act as a fallback or a full replacement — install its MCP server separately, then either set `search.fallback_provider: footnote_mcp` (used when SearXNG errors, returns nothing, or can't fetch a page — PDFs and JS-rendered pages included) or set `search.provider: footnote_mcp` directly, pointing `search.footnote.command` at the executable.
+`footnote-mcp` (see Installation) can also replace SearXNG outright — set `search.provider: footnote_mcp` instead of using it as a fallback.
 
 ## CLI
 
@@ -141,6 +133,7 @@ uv run deep-research run "research question"
 uv run deep-research run "research question" --quiet
 uv run deep-research run "research question" --no-report
 uv run deep-research resume res_...
+uv run deep-research resumable
 uv run deep-research status res_...
 uv run deep-research report res_... > reports/report.md
 ```
