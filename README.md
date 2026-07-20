@@ -13,8 +13,9 @@ A local, evidence-first deep-research CLI: it runs `ornith:9b` through Ollama, s
 ```text
 question
   → planner (up to 3 tasks)
-  → SearXNG search + page reading
-  → SQLite evidence store
+        ├─ research worker → SearXNG search + page reading ─┐
+        ├─ research worker → SearXNG search + page reading ─┼→ SQLite evidence store
+        └─ research worker → SearXNG search + page reading ─┘
   → fact checker (verified / conflicting / insufficient / rejected)
   → Markdown + PDF report, citations validated against the store
 ```
