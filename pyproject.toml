@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "local-deep-research"
 version = "0.1.0"
-description = "Evidence-first multi-agent deep research using Ollama and SearXNG"
+description = "Local multi-agent Deep Research on Ollama and SearXNG, built on Anthropic's orchestrator-workers research principles — every claim traced through a citation-validated SQLite evidence store"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
