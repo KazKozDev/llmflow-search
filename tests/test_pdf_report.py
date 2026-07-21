@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from deep_research.pdf_report import _MARKDOWN_HR_LINE, _extract_title, render_report_pdf, report_pdf_filename
+from deep_research.pdf_report import (
+    _MARKDOWN_HR_LINE,
+    _extract_title,
+    _truncate_at_word_boundary,
+    render_report_pdf,
+    report_pdf_filename,
+)
 
 
 def test_extract_title_pulls_leading_h1() -> None:
@@ -56,6 +62,22 @@ def test_render_report_pdf_without_logo_still_succeeds(tmp_path) -> None:
         logo_path=Path("/nonexistent/logo.png"),
     )
     assert output_path.is_file()
+
+
+def test_truncate_at_word_boundary_leaves_short_text_untouched() -> None:
+    assert _truncate_at_word_boundary("A short title", 80) == "A short title"
+
+
+def test_truncate_at_word_boundary_cuts_on_a_whole_word_with_ellipsis() -> None:
+    title = "Venture Capital and Public-Market Investment in AI Companies: A Comparative Report"
+    truncated = _truncate_at_word_boundary(title, 80)
+
+    assert len(truncated) <= 80
+    assert truncated.endswith("…")
+    assert not truncated[:-1].endswith(" ")
+    # Must not split "Report" into "Repo" — the bug this guards against.
+    assert "Repo…" not in truncated
+    assert title.startswith(truncated[:-1].rstrip(",.;:—-"))
 
 
 def test_hr_line_regex_matches_common_separator_styles() -> None:
