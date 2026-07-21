@@ -1,10 +1,10 @@
+<a href="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml"><img src="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+
 <p align="center">
   <br>
   <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
   <br><br>
   <strong>Deep Research on a local model — every claim traced to its source</strong>
-  <br><br>
-  <a href="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml"><img src="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <br><br>
 </p>
 
