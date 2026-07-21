@@ -104,14 +104,9 @@ Every role is a separate task with its own prompt, but by default all of them ca
 - the writer may only reference sources already admitted into the evidence store for that research ID;
 - the citation validator — deterministic code, no LLM call — rewrites internal citation markers into real Markdown links and rejects any citation it can't resolve to a stored source ([`citations.py`](src/deep_research/citations.py)).
 
-Terminal progress during a run:
+Terminal progress during a real run:
 
-```text
-[12:57:28] STAGE: researching
-[12:57:28] PLAN: tasks created — 3
-[12:57:28] SEARCH [task_...]: query queued — ...
-[12:58:04] READ [task_...]: ...
-```
+![Terminal demo of a research run](assets/images/demo.gif)
 
 ## Configuration
 
