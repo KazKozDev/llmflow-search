@@ -203,6 +203,13 @@ SearXNG is a metasearch layer: results depend on the availability and quality of
 
 This project has only been tested against `ornith:9b`. Other Ollama models haven't been tried, and it's unknown how they'd behave for planning, extraction, or fact-checking — prompts and structured-output parsing may need adjustment for a different model.
 
+A few things this project is not:
+
+- **Not fully offline, despite being "local".** SearXNG itself reaches out to external search engines — only the LLM inference is local, not the network path as a whole.
+- **Not protection against hallucination by itself.** The evidence store guarantees every citation points to an actually-stored page — not that the page is telling the truth, or that the model understood it correctly. Fact-checking is done by the same small local model, not a separate, stronger verifier.
+- **Not a production/multi-user service.** One SQLite file, no authentication, no request queue — this is a tool for one person at one terminal, not a backend for a website.
+- **Not a replacement for a human fact-checker or journalist.** Citations trace back to a source, but the decision to trust that source is still made by the model using heuristics (domain reputation, source type) — not a person.
+
 ## References
 
 - [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) — orchestrator-workers pattern, effort scaled to query complexity, parallel subagents as intelligent filters.
