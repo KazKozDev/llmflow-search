@@ -1,13 +1,13 @@
 <p align="center">
   <br>
-  <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
-  <br><br>
-  <strong>Deep Research on a local model — every claim traced to its source</strong>
-  <br><br>
   <a href="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/KazKozDev/llmflow-search/ci.yml?branch=main&label=CI&style=flat-square&labelColor=555" alt="CI"></a>
   <a href="https://codecov.io/gh/KazKozDev/llmflow-search"><img src="https://img.shields.io/codecov/c/github/KazKozDev/llmflow-search?label=coverage&style=flat-square&labelColor=555" alt="Coverage"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12%2B-blue?style=flat-square&labelColor=555" alt="Python 3.12+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square&labelColor=555" alt="License MIT"></a>
+  <br><br>
+  <img src="assets/images/llmflow.png" alt="Local Deep Research" width="52%">
+  <br><br>
+  <strong>Deep Research on a local model — every claim traced to its source</strong>
   <br><br>
 </p>
 
