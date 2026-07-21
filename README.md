@@ -100,7 +100,9 @@ Every role is a separate task with its own prompt, but by default all of them ca
 
 Terminal progress during a real run:
 
-![Terminal demo of a research run](assets/images/demo.gif)
+<p align="center">
+  <img src="assets/images/demo.gif" alt="Terminal demo of a research run" width="100%">
+</p>
 
 ## Configuration
 
