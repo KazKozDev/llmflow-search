@@ -1,4 +1,6 @@
 <a href="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml"><img src="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT"></a>
 
 <p align="center">
   <br>
