@@ -187,6 +187,8 @@ There are no model-output fallbacks. Planner, extraction, fact-checking, and rep
 
 SearXNG is a metasearch layer: results depend on the availability and quality of the external engines it queries. Running SearXNG locally does not make internet sources reliable by itself — the system keeps every claim tied to its source and evidence status instead of treating a snippet as confirmed.
 
+This project has only been tested against `ornith:9b`. Other Ollama models haven't been tried, and it's unknown how they'd behave for planning, extraction, or fact-checking — prompts and structured-output parsing may need adjustment for a different model.
+
 ## References
 
 - [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) — orchestrator-workers pattern, effort scaled to query complexity, parallel subagents as intelligent filters.
