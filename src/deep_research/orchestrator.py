@@ -12,7 +12,7 @@ from .citations import CitationError, validate_and_render_citations
 from .config import AppConfig
 from .llm import LLM, LLMError
 from .models import EvidenceItem, GapAssessment, ResearchStatus, Source, VerificationStatus, now_iso
-from .pdf_report import report_pdf_filename, render_report_pdf
+from .pdf_report import render_report_pdf, report_pdf_filename
 from .store import EvidenceStore
 from .tools import Fetcher, SearchProvider
 

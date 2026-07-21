@@ -4,6 +4,8 @@
   <br><br>
   <strong>Deep Research on a local model — every claim traced to its source</strong>
   <br><br>
+  <a href="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml"><img src="https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <br><br>
 </p>
 
 The idea was to build a Deep Research pipeline that runs entirely on a local LLM instead of a cloud model.

@@ -29,7 +29,10 @@ _UNICODE_FONT_CANDIDATES: tuple[tuple[Path, Path | None], ...] = (
     (Path("/System/Library/Fonts/Supplemental/Tahoma.ttf"), Path("/System/Library/Fonts/Supplemental/Tahoma Bold.ttf")),
     (Path("/System/Library/Fonts/Supplemental/Verdana.ttf"), Path("/System/Library/Fonts/Supplemental/Verdana Bold.ttf")),
     (Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"), None),
-    (Path("/System/Library/Fonts/Supplemental/NotoSans-Regular.ttf"), Path("/System/Library/Fonts/Supplemental/NotoSans-Bold.ttf")),
+    (
+        Path("/System/Library/Fonts/Supplemental/NotoSans-Regular.ttf"),
+        Path("/System/Library/Fonts/Supplemental/NotoSans-Bold.ttf"),
+    ),
     (
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -84,7 +87,8 @@ body {{ font-family: "{body_font}"; font-size: 8.5pt; color: #333333; line-heigh
 .doc-title {{ font-family: "{body_font}"; font-size: 15pt; color: #333333; margin: 0 0 2px 0; {weight_rule} }}
 .doc-meta {{ font-size: 7.5pt; color: #6b6b6b; margin-bottom: 4px; }}
 hr.top-rule {{ border: none; border-top: 1.2pt solid #333333; margin: 10px 0 20px 0; }}
-h1 {{ font-family: "{body_font}"; font-size: 11pt; color: #333333; border-bottom: 0.8pt solid #c7d0d8; padding-bottom: 4px; margin-top: 22px; {heading_weight} }}
+h1 {{ font-family: "{body_font}"; font-size: 11pt; color: #333333; border-bottom: 0.8pt solid #c7d0d8;
+    padding-bottom: 4px; margin-top: 22px; {heading_weight} }}
 h2 {{ font-family: "{body_font}"; font-size: 10pt; color: #333333; margin-top: 18px; {heading_weight} }}
 h3 {{ font-family: "{body_font}"; font-size: 9.5pt; color: #4d4d4d; margin-top: 14px; {heading_weight} }}
 p {{ margin: 6px 0; text-align: left; }}
