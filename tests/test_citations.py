@@ -60,6 +60,13 @@ def test_reference_heading_matches_report_language() -> None:
     assert "## Источники" in rendered_ru
 
 
+def test_rejects_malformed_citation_left_after_substitution() -> None:
+    with pytest.raises(CitationError, match="malformed citations"):
+        validate_and_render_citations(
+            "Fact one <cite src_abc123>. Bad tag <cite foo>.", {"src_abc123": source()}
+        )
+
+
 def test_rejects_unknown_citation() -> None:
     with pytest.raises(CitationError, match="unknown source"):
         validate_and_render_citations("Fact <cite src_missing>", {"src_abc123": source()})
