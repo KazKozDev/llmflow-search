@@ -80,7 +80,7 @@ Once SearXNG and `footnote-mcp` are in place, double-click [RUN_DEEP_RESEARCH.co
 uv run deep-research run "Compare local RAG frameworks"
 ```
 
-Runs the research and, once finished, prints the research ID and the full Markdown report.
+Runs the research and, once finished, prints the research ID and the full Markdown report. A letterhead-style PDF of the same report is generated automatically and saved to `reports/` — no extra flag needed.
 
 ## Example report
 
