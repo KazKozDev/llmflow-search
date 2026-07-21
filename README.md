@@ -82,6 +82,14 @@ uv run deep-research run "Compare local RAG frameworks"
 
 Runs the research and, once finished, prints the research ID and the full Markdown report.
 
+## Example report
+
+<a href="assets/example-report.pdf"><img src="assets/images/report-preview.png" alt="Example report preview" width="360"></a>
+
+Query: *"Compare venture capital and public-market investment in AI companies across the US, Europe, and China in 2025-2026: total funding volumes, largest deals, government subsidies/industrial policy, and which region is pulling ahead."*
+
+Click the preview to open the [full PDF report](assets/example-report.pdf) — every bracketed citation resolves to a source that made it through the evidence store.
+
 ## What happens during research
 
 Every role is a separate task with its own prompt, but by default all of them call the same local model, `ornith:9b`:
