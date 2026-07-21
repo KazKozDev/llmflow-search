@@ -111,6 +111,12 @@ def _extract_title(report_markdown: str, fallback: str) -> tuple[str, str]:
     return fallback, report_markdown
 
 
+def _truncate_at_word_boundary(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",.;:—-") + "…"
+
+
 def _logo_data_uri(logo_path: Path) -> str | None:
     if not logo_path.is_file():
         return None
@@ -147,7 +153,7 @@ def render_report_pdf(
 <hr class="top-rule" />
 {body_html}
 <div id="footer_content">
-  <span>{html.escape(title[:80])}</span> &mdash;
+  <span>{html.escape(_truncate_at_word_boundary(title, 80))}</span> &mdash;
   <span>Page <pdf:pagenumber /> of <pdf:pagecount /></span>
 </div>
 </body>
