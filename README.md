@@ -29,8 +29,8 @@ uv run --no-sync python -m llmflow_search
 
 <p align="center">
   <a href="agent.command"><img src="https://raw.githubusercontent.com/KazKozDev/book-translator/main/assets/badges/macos.png" alt="macOS" height="36"></a>
-  <a href="#manual-installation"><img src="https://raw.githubusercontent.com/KazKozDev/book-translator/main/assets/badges/windows.png" alt="Windows" height="36"></a>
-  <a href="#manual-installation"><img src="https://raw.githubusercontent.com/KazKozDev/book-translator/main/assets/badges/linux.png" alt="Linux" height="36"></a>
+  <a href="#quick-start"><img src="https://raw.githubusercontent.com/KazKozDev/book-translator/main/assets/badges/windows.png" alt="Windows" height="36"></a>
+  <a href="#quick-start"><img src="https://raw.githubusercontent.com/KazKozDev/book-translator/main/assets/badges/linux.png" alt="Linux" height="36"></a>
 </p>
 
 <p align="center">Double-click <code>agent.command</code> on macOS. Windows and Linux use the manual <code>uv</code> commands.</p>
@@ -46,17 +46,12 @@ uv run --no-sync python -m llmflow_search
 3. Wait for the MCP connection and enter a research question:
 
    ```text
-   Connecting to MCP server (footnote-mcp)... ✓ (<tool count> tools)
-     Profile: footnote
-
-   ==================================================
-     Interactive mode. Type 'exit' to quit.
-   ==================================================
-
+   Connecting to MCP server (footnote-mcp)... ✓
+   Interactive mode. Type 'exit' to quit.
    >>> What changed in Python packaging this month?
    ```
 
-   The exact tool count depends on the installed `footnote-mcp` version. The agent prints research stages while it searches, then returns the verified answer, a source list, coverage notes, report paths, and the number of completed steps.
+   The agent prints research stages while it searches, then returns the verified answer, sources, coverage notes, and report paths.
 
 ## Give Ollama internet access through web search
 
@@ -109,16 +104,9 @@ When verification marks the task complete and at least one admitted source is pr
 
 The report includes the verified answer and its source list. The renderer looks for an available Unicode font on macOS or Linux so Russian, Spanish, and other non-ASCII text is not silently dropped. Set `LLMFLOW_SEARCH_REPORT_LOGO` to replace the packaged logo or to an empty value to omit it.
 
-The last three question-and-answer exchanges remain in the interactive session for follow-up questions. Completed runs also update the JSON research memory with the strategy, attempted queries, sources, outcome, and source domains that produced no admitted evidence.
-
 ## How it works
 
 The interactive Python application starts Ollama model selection, launches the configured MCP server as a subprocess, inspects its tools, and compiles a conditional LangGraph `StateGraph`.<br>
-**REQUIREMENTS** converts the question into completion criteria.<br>
-**PLAN** chooses tool steps; **EXECUTE** calls the MCP server and normalizes returned sources.<br>
-**LEDGER** maps proposed claims to sources; **CHALLENGE** looks for missing or weak support.<br>
-**ANSWER** drafts only from the bounded admitted sources; **VERIFY** checks the prose and requested coverage again.<br>
-**ASSIMILATE** records both successful and unsuccessful completed runs in local research memory.
 
 ```text
 Terminal question
@@ -137,31 +125,14 @@ Terminal sources + JSON memory + verified PDF
 <details>
 <summary>Technical architecture</summary>
 
-### Research pipeline
-
-1. **Model selection** — [`llm.py`](src/llmflow_search/llm.py) lists local Ollama models and selects a main and fast model. JSON-schema calls can route from an MLX-tagged model to its installed non-MLX sibling because Ollama's MLX runtime does not enforce schema-constrained decoding.
-2. **MCP connection** — [`app.py`](src/llmflow_search/app.py) launches `LLMFLOW_SEARCH_MCP_CMD` over stdio, initializes the session, loads tool schemas, and selects the `footnote` or `generic` profile.
-3. **Requirements and planning** — [`nodes.py`](src/llmflow_search/nodes.py) extracts blocking completion criteria, builds tool steps, and executes them through [`mcp_client.py`](src/llmflow_search/mcp_client.py). Search-backed calls are separated by a configurable delay.
-4. **Evidence review** — candidate sources are normalized and audited. The ledger ties supported claims to source IDs; the challenge stage can request another tool call, re-extract evidence, replan, or stop with insufficient evidence.
-5. **Draft and verification** — the writer receives only the bounded source set. Verification re-grounds the prose against the same sources and produces a compact coverage verdict.
-6. **Output and memory** — [`reports.py`](src/llmflow_search/reports.py) writes optional JSON diagnostics, creates a PDF only for a verified source-backed answer, and records the run in the JSON memory store.
-
-The compiled graph contains 11 nodes: `requirements`, `plan`, `execute`, `evidence_ledger`, `evidence_challenge`, `evidence_reextract`, `evaluate`, `answer`, `verify`, `strategy`, and `assimilate`. The interactive runner uses a recursion limit of 200.
-
 ### Important files
 
 - `agent.command` — macOS launcher and locked environment bootstrap.
 - `src/llmflow_search/app.py` — interactive entry point and MCP session lifecycle.
 - `src/llmflow_search/nodes.py` — graph nodes, routers, evidence gates, and retry limits.
-- `src/llmflow_search/prompts.py` — system contracts for every model stage.
 - `src/llmflow_search/mcp_client.py` — MCP tool discovery and invocation.
 - `src/llmflow_search/sources.py` — source extraction, normalization, deduplication, clipping, and auditing.
-- `src/llmflow_search/search_memory.py` — per-run query, URL, observation, and strategy memory.
-- `src/llmflow_search/memory.py` — persistent strategy, skill, and experience store.
 - `src/llmflow_search/pdf_report.py` — Markdown-to-PDF rendering and Unicode font selection.
-- `scripts/stub_mcp_server.py` — one-tool server for the generic MCP profile.
-- `scripts/live_smoke.py` — manual live query against Ollama and the real MCP server.
-- `tests/` — offline graph, entry-point, MCP, model, console, profile, and PDF tests.
 
 </details>
 
@@ -207,42 +178,18 @@ The packaged application has one macOS launcher. Windows and Linux use the manua
 <summary>Limitations</summary>
 
 - LLMFlow-Search is not an offline search engine. Ollama inference is local, while current information still comes from external search and page-reading tools.
-- Evidence ledger, challenge, drafting, and final prose verification use the selected Ollama models. Deterministic source bounds and routing prevent several failure modes, but model quality still affects planning, extraction, and judgments.
-- A weak model may return malformed JSON or poor tool plans. JSON responses are retried once; MLX models only gain schema-constrained decoding when a compatible non-MLX sibling is installed.
+- Evidence review, drafting, and verification use the selected Ollama models, so model quality still affects planning, extraction, judgments, JSON responses, and tool plans. JSON responses are retried once; MLX models only gain schema-constrained decoding when a compatible non-MLX sibling is installed.
 - Hard limits can end a difficult research task before coverage is complete. The correct result in that case is the explicit insufficient-evidence message, not a partial PDF.
-- The default source-aware path depends on the separately installed `footnote-mcp` server. Its search engines, browser tiers, and website access have their own availability limits.
-- The generic MCP profile accepts arbitrary tool output as source material and therefore has weaker provenance and source typing than the `footnote` profile.
+- The default path depends on `footnote-mcp` and its search engines, browser tiers, and website access. The generic MCP profile accepts arbitrary tool output and therefore has weaker provenance and source typing.
 - `agent.command` is a macOS/zsh launcher. There is no Windows launcher, Linux launcher, browser UI, official Docker image, or hosted service in this repository.
 - PDF export depends on `xhtml2pdf` and an available system Unicode font. Research output still appears in the terminal if PDF rendering fails.
 
 </details>
 
 <details>
-<summary>Manual installation, Docker, development setup</summary>
+<summary>Development setup</summary>
 
-### Manual installation
-
-Clone the agent and `footnote-mcp` beside each other:
-
-```bash
-git clone https://github.com/KazKozDev/footnote-mcp.git
-git clone https://github.com/KazKozDev/llmflow-search.git
-cd llmflow-search
-uv sync --locked
-uv pip install -e ../footnote-mcp "mcp<2"
-uv run --no-sync python -m playwright install chromium
-uv run --no-sync python -m llmflow_search
-```
-
-`uv sync` creates `.venv` from `uv.lock` and installs LLMFlow-Search. The editable sibling install supplies the `footnote-mcp` executable. Playwright installs the Chromium browser used by browser-backed fetches, and the final command starts model selection and the interactive prompt.
-
-On macOS, double-click `agent.command` after cloning both repositories instead of entering these commands manually.
-
-### Docker
-
-This repository does not include a Dockerfile or published image. Run the Python application natively so it can reach local Ollama and launch the configured stdio MCP server.
-
-### Development setup
+The installation commands at the top of this README create the locked environment. Run the project checks with:
 
 ```bash
 uv sync --locked
