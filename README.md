@@ -1,5 +1,7 @@
 <p align="center">
+  <br><br>
   <a href="https://github.com/KazKozDev/llmflow-search"><img src="src/llmflow_search/assets/llmflow.png" alt="LLMFlow-Search" width="620"></a>
+  <br><br>
 </p>
 
 # LLMFlow-Search — Local LLM Web Search Agent Powered by Ollama
