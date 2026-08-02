@@ -1,0 +1,1657 @@
+"""Graph nodes, routers, and graph assembly."""
+
+import asyncio
+import json
+
+from langgraph.graph import END, StateGraph
+from mcp import ClientSession
+
+from . import llm, mcp_client
+from . import memory as _memmod
+from .config import (
+    INSUFFICIENT_EVIDENCE_MESSAGE,
+    LISTING_DRILLDOWN_TOP_K,
+    MAX_EVIDENCE_ROUNDS,
+    MAX_PLAN_STEPS,
+    MAX_STAGNANT_ROUNDS,
+    ROUNDUP_MIN_SOURCES,
+)
+from .console import print
+from .llm import _json_loads_best_effort, _ollama_chat_json
+from .observations import _diagnose_observation_with_model, _enrich_sources_with_observation, _record_observation
+from .profiles import FOOTNOTE_PROFILE, Profile
+from .reports import _assimilate_research
+from .search_memory import (
+    _append_unique,
+    _format_search_memory_for_prompt,
+    _merge_search_memory,
+    _strategy_plan_from_memory,
+    _update_search_memory,
+)
+from .sources import _audit_evidence_state, _effective_question, _format_sources_for_llm, _merge_sources
+from .state import AgentState
+
+
+def _default_requirements(question: str) -> dict:
+    return {
+        "target": question,
+        "answer_mode": "strict",
+        "scope": "answer the user question",
+        "granularity": None,
+        "unit_or_pair": None,
+        "required_coverage": "all explicitly requested parts of the question",
+        "output_format": "direct answer",
+        "quality_preferences": [],
+        "completion_criteria": [
+            "The answer addresses every explicit requirement in the user question.",
+            "Every factual claim is grounded in the provided sources.",
+            "The answer uses one consistent unit, currency pair, or measurement basis unless the user explicitly asked for multiple.",
+        ],
+        "missing_data_policy": "If any required part cannot be sourced, mark task_complete=false and list the gap.",
+        "search_hints": [],
+    }
+
+
+def _normalize_requirements(raw: dict | None, question: str) -> dict:
+    defaults = _default_requirements(question)
+    if not isinstance(raw, dict):
+        return defaults
+    result = defaults | {key: value for key, value in raw.items() if key in defaults and value not in (None, "")}
+    for key in ("quality_preferences", "completion_criteria", "search_hints"):
+        if not isinstance(result.get(key), list):
+            result[key] = defaults[key]
+        result[key] = [str(item) for item in result[key] if str(item).strip()]
+    if result.get("answer_mode") not in ("strict", "roundup"):
+        result["answer_mode"] = "strict"
+    return result
+
+
+def _proof_requirements(requirements: dict) -> dict:
+    """Return the user-contract fields that can block a grounded answer."""
+    return {
+        "target": requirements.get("target"),
+        "scope": requirements.get("scope"),
+        "granularity": requirements.get("granularity"),
+        "unit_or_pair": requirements.get("unit_or_pair"),
+        "required_coverage": requirements.get("required_coverage"),
+        "output_format": requirements.get("output_format"),
+        "completion_criteria": list(requirements.get("completion_criteria", [])),
+        "missing_data_policy": requirements.get("missing_data_policy"),
+    }
+
+
+REQUIREMENTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "target": {"type": "string"},
+        "answer_mode": {"type": "string", "enum": ["strict", "roundup"]},
+        "scope": {"type": "string"},
+        "granularity": {"type": ["string", "null"]},
+        "unit_or_pair": {"type": ["string", "null"]},
+        "required_coverage": {"type": "string"},
+        "output_format": {"type": "string"},
+        "quality_preferences": {"type": "array", "items": {"type": "string"}},
+        "completion_criteria": {"type": "array", "items": {"type": "string"}},
+        "missing_data_policy": {"type": "string"},
+        "search_hints": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["target", "answer_mode", "scope", "completion_criteria"],
+}
+
+
+async def requirements_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Extract task completion requirements before planning."""
+    if state.get("requirements_result"):
+        return {"iteration": state["iteration"] + 1}
+
+    question = _effective_question(state["task"])
+    iteration = state["iteration"] + 1
+    print("\n  [REQUIREMENTS] Extracting completion criteria...")
+    content = llm._ollama_chat_schema(
+        model,
+        [{"role": "user", "content": f"QUESTION:\n{question}\n\nExtract task completion requirements."}],
+        system=profile.requirements,
+        format_schema=REQUIREMENTS_SCHEMA,
+    )
+    raw = _json_loads_best_effort(content, {})
+    requirements = _normalize_requirements(raw, question)
+    criteria = requirements.get("completion_criteria", [])
+    print(f"  [REQUIREMENTS] {len(criteria)} criteria, answer_mode={requirements.get('answer_mode')}")
+    for i, criterion in enumerate(criteria[:4], 1):
+        print(f"    {i}. {criterion[:100]}")
+    return {"requirements_result": requirements, "iteration": iteration}
+
+
+PLAN_STEPS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "arg": {"type": "string"},
+                },
+                "required": ["tool", "arg"],
+            },
+        },
+    },
+    "required": ["steps"],
+}
+
+
+def _numbered_requirements_block(completion_criteria: list[str]) -> str:
+    if not completion_criteria:
+        return "(none)"
+    return "\n".join(f"{i}. {c}" for i, c in enumerate(completion_criteria))
+
+
+def _parse_indexed_item(item, requirement_count: int) -> tuple[str, int | None]:
+    """Parse a {requirement_index, text} gap item against the numbered PROOF_REQUIREMENTS list.
+
+    requirement_index is schema-required (see _evidence_ledger_schema/_evidence_challenge_schema),
+    but decoding is only truly enforced on GGUF-backed models (see llm._schema_capable_model) — this
+    is a defensive parse for whatever the model actually returned, not the primary correctness
+    mechanism. A missing/out-of-range index means the item cannot be tied to a real requirement.
+    """
+    if isinstance(item, dict):
+        text = str(item.get("text") or "").strip()[:300]
+        raw_idx = item.get("requirement_index")
+        try:
+            idx = int(raw_idx) if raw_idx is not None else None
+        except (TypeError, ValueError):
+            idx = None
+    elif isinstance(item, str):
+        text, idx = item.strip()[:300], None
+    else:
+        text, idx = "", None
+    if idx is None or not (0 <= idx < requirement_count):
+        idx = None
+    return text, idx
+
+
+def _evidence_ledger_schema(requirement_count: int) -> dict:
+    max_index = max(requirement_count - 1, 0)
+    indexed_gap = {
+        "type": "object",
+        "properties": {
+            "requirement_index": {"type": "integer", "minimum": 0, "maximum": max_index},
+            "text": {"type": "string"},
+        },
+        "required": ["requirement_index", "text"],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "answer_ready": {"type": "boolean"},
+            "ledger": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "claim_id": {"type": "string"},
+                        "requirement_index": {"type": "integer", "minimum": 0, "maximum": max_index},
+                        "requirement": {"type": "string"},
+                        "proposed_claim": {"type": "string"},
+                        "event_date": {"type": "string"},
+                        "publication_date": {"type": "string"},
+                        "location": {"type": "string"},
+                        "source_ids": {"type": "array", "items": {"type": "integer"}},
+                        "source_quality": {"type": "string"},
+                        "support_status": {"type": "string", "enum": ["supported", "partial", "missing", "rejected"]},
+                        "support_level": {"type": "string", "enum": ["supported", "partial", "missing"]},
+                        "can_use_in_answer": {"type": "boolean"},
+                        "missing": {"type": "string"},
+                        "rejection_reason": {"type": "string"},
+                    },
+                    "required": ["claim_id", "requirement_index", "support_status", "support_level", "can_use_in_answer"],
+                },
+            },
+            "global_missing": {"type": "array", "items": indexed_gap},
+            "next_steps": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["answer_ready", "ledger", "global_missing", "next_steps", "reason"],
+    }
+
+
+def _evidence_challenge_schema(requirement_count: int) -> dict:
+    max_index = max(requirement_count - 1, 0)
+    return {
+        "type": "object",
+        "properties": {
+            "answer_permitted": {"type": "boolean"},
+            "blocking_gaps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "requirement_index": {"type": "integer", "minimum": 0, "maximum": max_index},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["requirement_index", "text"],
+                },
+            },
+            "next_steps": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["answer_permitted", "blocking_gaps", "next_steps", "reason"],
+    }
+
+
+def _normalize_evidence_ledger_result(
+    raw: dict | None,
+    candidate_sources: list[dict],
+    completion_criteria: list[str] | None = None,
+    answer_mode: str = "strict",
+) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    completion_criteria = completion_criteria or []
+    requirement_count = len(completion_criteria)
+    source_count = len(candidate_sources)
+    ledger = []
+    supported_source_ids: set[int] = set()
+    supported_claims = 0
+    dropped_gaps: list[str] = []
+    for item in raw.get("ledger", []):
+        if not isinstance(item, dict):
+            continue
+        source_ids = []
+        for raw_id in item.get("source_ids", []):
+            try:
+                source_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= source_id <= source_count and source_id not in source_ids:
+                source_ids.append(source_id)
+        support_status = str(item.get("support_status") or item.get("support_level") or "missing").strip().lower()
+        if support_status not in {"supported", "partial", "missing", "rejected"}:
+            support_status = "missing"
+        support_level = str(item.get("support_level") or "missing").strip().lower()
+        if support_level not in {"supported", "partial", "missing"}:
+            support_level = "missing" if support_status == "rejected" else support_status
+        if support_status == "supported":
+            support_level = "supported"
+        can_use = bool(item.get("can_use_in_answer")) and support_level == "supported" and bool(source_ids)
+        if can_use:
+            supported_source_ids.update(source_ids)
+            supported_claims += 1
+        claim_id = str(item.get("claim_id") or "").strip()[:80]
+        if not claim_id:
+            claim_id = f"claim_{len(ledger) + 1}"
+        _, requirement_index = _parse_indexed_item(item, requirement_count)
+        missing_text = str(item.get("missing") or "").strip()[:300]
+        if missing_text and requirement_index is None:
+            dropped_gaps.append(missing_text)
+            missing_text = ""
+        ledger.append(
+            {
+                "claim_id": claim_id,
+                "requirement_index": requirement_index,
+                "requirement": str(item.get("requirement") or "").strip()[:200],
+                "proposed_claim": str(item.get("proposed_claim") or "").strip()[:500],
+                "event_date": str(item.get("event_date") or "").strip()[:40],
+                "publication_date": str(item.get("publication_date") or "").strip()[:40],
+                "location": str(item.get("location") or "").strip()[:120],
+                "source_ids": source_ids,
+                "source_quality": str(item.get("source_quality") or "unknown").strip().lower()[:40],
+                "support_status": support_status,
+                "support_level": support_level,
+                "can_use_in_answer": can_use,
+                "missing": missing_text,
+                "rejection_reason": str(item.get("rejection_reason") or "").strip()[:300],
+            }
+        )
+
+    global_missing = []
+    for raw_gap in raw.get("global_missing", []):
+        text, idx = _parse_indexed_item(raw_gap, requirement_count)
+        if not text:
+            continue
+        if idx is None:
+            dropped_gaps.append(text)
+        else:
+            global_missing.append(text)
+
+    next_steps = []
+    for step in raw.get("next_steps", []):
+        step = str(step).strip()
+        if step and ":" in step and step not in next_steps:
+            next_steps.append(step[:500])
+
+    # answer_ready is derived from validated structured fields only — the model's own
+    # raw "answer_ready" self-report is not trusted, since a hallucinated (unindexed)
+    # concern must not be able to block readiness just because the model believed it.
+    indexed_rows = [item for item in ledger if item["requirement_index"] is not None]
+    if answer_mode == "roundup":
+        answer_ready = len(supported_source_ids) >= ROUNDUP_MIN_SOURCES
+    else:
+        no_real_blockers = not global_missing and all(
+            item["support_level"] == "supported" and item["can_use_in_answer"] for item in indexed_rows
+        )
+        answer_ready = bool(ledger) and no_real_blockers
+    admitted = [candidate_sources[source_id - 1] for source_id in sorted(supported_source_ids)]
+    return {
+        "answer_ready": answer_ready,
+        "answer_mode": answer_mode,
+        "ledger": ledger,
+        "global_missing": list(dict.fromkeys(global_missing)),
+        "dropped_gaps": list(dict.fromkeys(dropped_gaps)),
+        "next_steps": next_steps[:4],
+        "reason": str(raw.get("reason") or "").strip()[:500],
+        "candidate_count": source_count,
+        "admissible_count": len(admitted),
+        "supported_claim_count": supported_claims,
+        "admissible_sources": admitted,
+    }
+
+
+def _normalize_evidence_challenge_result(raw: dict | None, ledger_result: dict | None, requirement_count: int = 0) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    ledger_result = ledger_result if isinstance(ledger_result, dict) else {}
+    blocking_gaps = []
+    dropped_gaps = []
+    for raw_gap in raw.get("blocking_gaps", []):
+        text, idx = _parse_indexed_item(raw_gap, requirement_count)
+        if not text:
+            continue
+        if idx is None:
+            dropped_gaps.append(text)
+        else:
+            blocking_gaps.append(text)
+    next_steps = []
+    for step in raw.get("next_steps", []):
+        step = str(step).strip()
+        if step and ":" in step and step not in next_steps:
+            next_steps.append(step[:500])
+    # answer_permitted is derived from the (already-sanitized) ledger readiness and the
+    # (already-sanitized) blocking_gaps — the model's own raw "answer_permitted" flag is
+    # not trusted, for the same reason as evidence_ledger's answer_ready above.
+    answer_permitted = bool(ledger_result.get("answer_ready")) and not blocking_gaps
+    return {
+        "answer_permitted": answer_permitted,
+        "blocking_gaps": list(dict.fromkeys(blocking_gaps)),
+        "dropped_gaps": list(dict.fromkeys(dropped_gaps)),
+        "next_steps": next_steps[:4],
+        "reason": str(raw.get("reason") or "").strip()[:500],
+    }
+
+
+def _insufficient_evidence_update(reason: str, gaps: list[str], audit: dict, state: AgentState) -> dict:
+    notes = [reason] if reason else []
+    return {
+        "verification_result": {
+            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "claim_checks": [],
+            "task_complete": False,
+            "coverage": {"overall_status": "missing"},
+            "gaps": list(dict.fromkeys(gaps)),
+            "notes": notes,
+            "insufficient_evidence": True,
+            "audit": audit,
+        },
+        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+        "evidence_round": state.get("evidence_round", 0) + 1,
+    }
+
+
+def _steps_from_plan_objects(content: str) -> list[str]:
+    """Convert the planner output into canonical 'tool: arg' step strings.
+
+    Schema-constrained decoding (GGUF/llama.cpp) returns {"steps":[{tool,arg}]},
+    but MLX models ignore the schema, so we also accept a bare list of step
+    objects, a single step object, or the legacy list of 'tool: arg' strings.
+    When we build the string from a {tool,arg} object the format is always clean.
+    """
+    parsed = _json_loads_best_effort(content, None)
+
+    # Normalize to a list of items (objects or strings).
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("steps"), list):
+            items = parsed["steps"]
+        elif parsed.get("tool"):
+            items = [parsed]  # single bare step object
+        else:
+            items = []
+    elif isinstance(parsed, list):
+        items = parsed
+    else:
+        items = []
+
+    steps: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            tool = str(item.get("tool", "")).strip()
+            arg = str(item.get("arg", "")).strip()
+            if tool and arg:
+                steps.append(f"{tool}: {arg}")
+        elif isinstance(item, str) and ":" in item:
+            steps.append(item.strip())  # legacy "tool: arg" string
+    return steps
+
+
+async def plan_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Break task into steps on first call, or use replanned steps."""
+    task = state["task"]
+    plan = state["plan"]
+    requirements = _normalize_requirements(state.get("requirements_result"), _effective_question(task))
+    evidence_round = state.get("evidence_round", 0)
+    search_memory = _merge_search_memory(state.get("search_memory"))
+    iteration = state["iteration"] + 1
+
+    if profile.uses_search_memory and search_memory.get("search_exhausted"):
+        return {"iteration": iteration}
+
+    if plan:
+        # already have a plan, use it
+        return {"iteration": iteration}
+
+    if profile.uses_search_memory and evidence_round and search_memory.get("next_queries"):
+        question = _effective_question(task)
+        steps = _strategy_plan_from_memory(question, search_memory)
+        print(f"\n  [PLAN] Using evolved search strategy (retry {evidence_round}/{MAX_EVIDENCE_ROUNDS})")
+        print(f"  [PLAN] {len(steps)} steps:")
+        for i, s in enumerate(steps, 1):
+            print(f"    {i}. {s}")
+        search_memory["next_queries"] = []
+        return {"plan": steps, "search_memory": search_memory, "iteration": iteration}
+
+    if evidence_round and profile.uses_search_memory:
+        question = _effective_question(task)
+        planning_input = f"""Task: {question}
+
+Task requirements:
+{json.dumps(requirements, ensure_ascii=False, indent=2)}
+
+The previous answer attempt did not have enough supported evidence.
+Additional evidence retry: {evidence_round} of {MAX_EVIDENCE_ROUNDS}.
+
+Search memory:
+{_format_search_memory_for_prompt(search_memory)}
+
+Create a new plan with fresh search terms only (web_search steps). Do NOT add web_read steps."""
+        print(f"\n  [PLAN] Searching for more evidence (retry {evidence_round}/{MAX_EVIDENCE_ROUNDS})")
+    elif evidence_round:
+        # generic: replan from scratch, nudged by the reflection on why the last try fell short
+        question = _effective_question(task)
+        reflections = search_memory.get("reflections", [])
+        reflection_block = (
+            "\n\nWhy the last attempt fell short:\n" + "\n".join(f"- {r}" for r in reflections[-3:])
+            if reflections else ""
+        )
+        planning_input = f"""Task: {question}
+
+Task requirements:
+{json.dumps(requirements, ensure_ascii=False, indent=2)}
+
+A previous attempt did not gather enough evidence (retry {evidence_round} of {MAX_EVIDENCE_ROUNDS}).{reflection_block}
+
+Create a fresh plan of steps to gather the needed information using the available tools."""
+        print(f"\n  [PLAN] Re-planning (retry {evidence_round}/{MAX_EVIDENCE_ROUNDS})")
+    else:
+        conv_ctx = state.get("conversation_context", "")
+        context_block = f"\nPrior conversation (for context only — do NOT copy into steps):\n{conv_ctx}\n" if conv_ctx else ""
+        planning_input = f"""Task: {task}
+{context_block}
+Task requirements:
+{json.dumps(requirements, ensure_ascii=False, indent=2)}
+
+Create a plan (JSON array of step strings)."""
+        print(f"\n  [PLAN] Breaking down: {task[:80]}")
+
+    response = llm._ollama_chat(
+        model,
+        [{"role": "user", "content": planning_input}],
+        tools=None,
+        system=profile.plan,
+        format_schema=PLAN_STEPS_SCHEMA,
+    )
+    content = response.get("content", "{}")
+
+    steps = _steps_from_plan_objects(content)
+    if not steps:
+        steps = [f"web_search: {task}"]
+
+    print(f"  [PLAN] {len(steps)} steps:")
+    for i, s in enumerate(steps, 1):
+        print(f"    {i}. {s}")
+
+    return {"plan": steps, "iteration": iteration}
+
+
+async def _execute_single_step(
+    step: str,
+    model: str,
+    fast_model: str,
+    tools: list[dict],
+    mcp_session: ClientSession | None,
+    question: str,
+    requirements: dict,
+    profile: Profile,
+) -> tuple[str, str, list, dict]:
+    """Execute one resolved step. Returns (step, result_text, sources, search_memory_updates)."""
+    deterministic_tool_call = profile.tool_call_from_step(step)
+    if deterministic_tool_call:
+        tool_calls = [deterministic_tool_call]
+        response: dict = {}
+    else:
+        response = llm._ollama_chat(
+            model,
+            [{"role": "user", "content": f"Execute this step using ONE tool call: {step}"}],
+            tools=tools,
+            system=profile.execute,
+        )
+        tool_calls = response.get("tool_calls", [])
+
+    result_text = ""
+    step_sources: list = []
+    sm_updates: dict = {}
+
+    if not tool_calls:
+        content = response.get("content", "")
+        if content:
+            result_text = content
+    else:
+        for tc in tool_calls:
+            name = tc.get("function", tc).get("name", "?")
+            args = tc.get("function", tc).get("arguments", tc.get("args", {}))
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            print(f"    [{name}]", end=" ", flush=True)
+            try:
+                tool_result = await mcp_client._call_mcp_tool(name, args, session=mcp_session)
+                result_text += f"\n--- {name} ---\n{tool_result}\n"
+                sm_updates = {"name": name, "args": args, "result": tool_result}
+                tool_payload = _json_loads_best_effort(tool_result, {})
+                observation = _diagnose_observation_with_model(
+                    fast_model or model, name, args,
+                    tool_payload if isinstance(tool_payload, dict) else {},
+                    question=question, requirements=requirements, current_step=step,
+                )
+                sm_updates["observation"] = observation
+                step_sources = profile.sources_from_tool_result(name, tool_result)
+                step_sources = _enrich_sources_with_observation(step_sources, observation)
+                print(f"→ {len(tool_result)} chars")
+            except Exception as e:
+                result_text += f"\n[{name} error: {e}]\n"
+                print(f"✗ {str(e)[:60]}")
+
+    return step, result_text, step_sources, sm_updates
+
+
+async def execute_node(state: AgentState, model: str, tools: list[dict], profile: Profile, mcp_session: ClientSession | None = None, fast_model: str = "") -> dict:
+    """Execute a batch of same-tool plan steps in parallel."""
+    plan = state["plan"]
+    completed = list(state["completed_steps"])
+    scratchpad = state["scratchpad"]
+    candidate_sources = list(state.get("candidate_sources") or state.get("sources", []))
+    sources = list(state.get("sources", []))
+    search_memory = _merge_search_memory(state.get("search_memory"))
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    iteration = state["iteration"] + 1
+
+    if iteration > MAX_PLAN_STEPS * 3:
+        return {"iteration": iteration}
+
+    if not plan:
+        return {"iteration": iteration}
+
+    # Collect batch: all consecutive steps sharing the same tool prefix
+    current_tool = plan[0].split(":", 1)[0].strip()
+    batch: list[str] = []
+    for step in plan:
+        if step.split(":", 1)[0].strip() == current_tool:
+            batch.append(step)
+        else:
+            break
+    remaining = plan[len(batch):]
+
+    # Batch steps are concrete tool calls. Dedup exact repeated steps before execution:
+    # repeated searches waste rate-limit budget and repeated reads waste source slots.
+    final_steps = list(dict.fromkeys(batch))
+
+    # Execute all steps in batch in parallel. Search calls stay sequential here;
+    # mcp_client applies the cross-batch delay immediately before each request.
+    is_search_batch = current_tool == "web_search"
+    concurrency = 1 if is_search_batch else len(final_steps)
+    print(f"\n  [EXEC] Batch ({len(final_steps)} steps, concurrency={concurrency}):")
+    for s in final_steps:
+        print(f"    • {s[:100]}")
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def run_with_sem(_index: int, step: str):
+        async with sem:
+            return await _execute_single_step(step, model, fast_model, tools, mcp_session, question, requirements, profile)
+
+    batch_results = await asyncio.gather(*[run_with_sem(i, s) for i, s in enumerate(final_steps)])
+
+    # Merge results sequentially into state
+    for step, result_text, step_sources, sm_updates in batch_results:
+        scratchpad += f"\n## Step: {step}\n{result_text}\n"
+        candidate_sources = _merge_sources(candidate_sources, step_sources)
+        sources = candidate_sources
+        if sm_updates:
+            name = sm_updates.get("name", "")
+            args = sm_updates.get("args", {})
+            tool_result = sm_updates.get("result", "")
+            search_memory = _update_search_memory(search_memory, name, args, tool_result)
+            observation = sm_updates.get("observation")
+            if observation:
+                search_memory = _record_observation(search_memory, observation, requirements)
+            if name == "generate_search_queries":
+                generated = _json_loads_best_effort(tool_result, {})
+                queries = generated.get("queries", []) if isinstance(generated, dict) else []
+                attempted = {q.lower() for q in search_memory.get("attempted_queries", [])}
+                for query in queries:
+                    query = str(query).strip()
+                    if query and query.lower() not in attempted:
+                        _append_unique(search_memory.setdefault("next_queries", []), query)
+        completed.append({
+            "step": step,
+            "result": result_text,
+            "tools_used": [],
+        })
+
+    # Post-batch decision: LLM sees what was found and decides next action
+    completion_criteria = requirements.get("completion_criteria", [])
+    read_urls = [c["step"].split(": ", 1)[1] for c in completed if c["step"].startswith("web_read: ")]
+    read_urls_set = set(read_urls)
+    drilldown_steps: list[str] = []
+    for source in candidate_sources:
+        if not isinstance(source, dict) or not source.get("is_listing_page"):
+            continue
+        for link in source.get("candidate_links", []):
+            link_url = str(link.get("url", "")) if isinstance(link, dict) else ""
+            if not link_url or link_url in read_urls_set:
+                continue
+            step = f"web_read: {link_url}"
+            if step not in drilldown_steps:
+                drilldown_steps.append(step)
+    drilldown_steps = drilldown_steps[:LISTING_DRILLDOWN_TOP_K]
+    if drilldown_steps:
+        print(f"  [DRILLDOWN] listing page detected — queuing {len(drilldown_steps)} article link(s)")
+    unhelpful_urls = search_memory.get("avoid_urls", [])[-15:]
+    unhelpful_domains = search_memory.get("bad_domains", [])[-15:]
+    post_input = (
+        f"Task: {question}\n\n"
+        f"Completion criteria (ALL must be met before DONE):\n"
+        + "\n".join(f"  - {c}" for c in completion_criteria)
+        + f"\n\nLast batch executed: {len(final_steps)} {current_tool} steps\n"
+        f"Steps completed so far ({len(completed)} total):\n"
+        + "\n".join(f"  - {c['step']}" for c in completed[-8:])
+        + "\n\nURLs already read (do NOT revisit these):\n"
+        + ("\n".join(f"  - {u}" for u in read_urls) if read_urls else "  (none yet)")
+        + ("\n\nURLs/domains that proved unhelpful this session (do NOT read these again):\n"
+           + "\n".join(f"  - {u}" for u in unhelpful_urls + unhelpful_domains)
+           if (unhelpful_urls or unhelpful_domains) else "")
+        + f"\n\nFetched candidate sources (pages actually read): {len(candidate_sources)}\n"
+        f"Remaining plan: {[s[:60] for s in remaining[:4]] if remaining else '(empty — no more steps planned)'}\n\n"
+        f"Recent findings:\n{scratchpad[-2500:]}"
+    )
+    post_content = _ollama_chat_json(model, [{"role": "user", "content": post_input}], system=profile.post_batch)
+    post = _json_loads_best_effort(post_content, {"decision": "CONTINUE"})
+    post_decision = post.get("decision", "CONTINUE").upper()
+
+    # DONE requires at least one fetched source — search snippets are not enough
+    if post_decision == "DONE" and not sources:
+        post_decision = "NEXT"
+    print(f"  [POST-BATCH] {post_decision} — {post.get('reason', '')[:80]}")
+
+    if post_decision == "DONE":
+        remaining = []
+    elif post_decision == "NEXT":
+        next_steps = post.get("next_steps", [])
+        if next_steps and isinstance(next_steps, list):
+            remaining = [str(s) for s in next_steps] + remaining
+
+    if drilldown_steps:
+        # A listing page was actually detected (real hyperlinks, not a guess) — queue its
+        # article links regardless of the post-batch LLM's decision. See execute_node's
+        # merge loop above and sources.py's is_listing_page/candidate_links passthrough.
+        remaining = drilldown_steps + [s for s in remaining if s not in drilldown_steps]
+
+    return {
+        "plan": remaining,
+        "completed_steps": completed,
+        "scratchpad": scratchpad,
+        "candidate_sources": candidate_sources,
+        "sources": sources,
+        "search_memory": search_memory,
+        "iteration": iteration,
+    }
+
+
+async def evidence_ledger_node(state: AgentState, model: str, tools: list[dict], profile: Profile) -> dict:
+    """Build the evidence ledger and choose the next tool step when proof is missing."""
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    proof_requirements = _proof_requirements(requirements)
+    completion_criteria = list(proof_requirements.get("completion_criteria", []))
+    answer_mode = requirements.get("answer_mode", "strict")
+    quality_preferences = list(requirements.get("quality_preferences", []))
+    candidate_sources = list(state.get("candidate_sources") or state.get("sources", []))
+    sources_text, valid_source_ids = _format_sources_for_llm(candidate_sources)
+    completed = state.get("completed_steps", [])
+    previous_ledger = state.get("evidence_ledger_result", {})
+    available_tools = [t.get("function", {}).get("name", "") for t in tools if isinstance(t, dict)]
+    available_tools = [name for name in available_tools if name]
+    iteration = state["iteration"] + 1
+
+    print(f"\n  [LEDGER] Reviewing proof from {len(valid_source_ids)} candidate sources (answer_mode={answer_mode})...")
+    if not valid_source_ids:
+        ledger_result = _normalize_evidence_ledger_result(
+            {
+                "answer_ready": False,
+                "ledger": [],
+                "global_missing": [{"requirement_index": 0, "text": "No fetched tool result can support final-answer claims."}] if completion_criteria else [],
+                "next_steps": [],
+                "reason": "No candidate sources are available.",
+            },
+            [],
+            completion_criteria,
+            answer_mode,
+        )
+        return {
+            "evidence_ledger_result": ledger_result,
+            "admissible_sources": [],
+            "sources": [],
+            "iteration": iteration,
+        }
+
+    prompt = f"""QUESTION:
+{question}
+
+ANSWER_MODE:
+{answer_mode}
+
+PROOF_REQUIREMENTS (numbered — use these indices as requirement_index):
+{_numbered_requirements_block(completion_criteria)}
+
+PROOF_REQUIREMENTS (full):
+{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+AVAILABLE_TOOLS:
+{json.dumps(available_tools, ensure_ascii=False)}
+
+COMPLETED_STEPS:
+{json.dumps([c.get("step", "") for c in completed[-12:]], ensure_ascii=False, indent=2)}
+
+PREVIOUS_EVIDENCE_LEDGER:
+{json.dumps(previous_ledger, ensure_ascii=False, indent=2)[:5000]}
+
+CANDIDATE SOURCES:
+{sources_text}
+
+Build the evidence ledger and choose next tool steps if proof is still missing."""
+
+    raw = llm._ollama_chat_schema(
+        model,
+        [{"role": "user", "content": prompt}],
+        system=profile.evidence_ledger,
+        format_schema=_evidence_ledger_schema(len(completion_criteria)),
+    )
+    ledger_result = _normalize_evidence_ledger_result(
+        _json_loads_best_effort(raw, {}), candidate_sources, completion_criteria, answer_mode
+    )
+    admitted = ledger_result["admissible_sources"]
+    next_steps = ledger_result.get("next_steps", [])
+    gaps = [item["missing"] for item in ledger_result.get("ledger", []) if item.get("missing")]
+    gaps.extend(ledger_result.get("global_missing", []))
+    print(
+        "  [LEDGER] "
+        f"supported claims {ledger_result['supported_claim_count']}; "
+        f"supported sources {len(admitted)}/{len(candidate_sources)}; "
+        f"answer_ready={ledger_result['answer_ready']}"
+    )
+    if gaps:
+        print(f"    gaps: {', '.join(gaps[:4])}")
+    if ledger_result.get("dropped_gaps"):
+        print(f"    dropped (no matching requirement): {', '.join(ledger_result['dropped_gaps'][:4])}")
+    if next_steps:
+        print(f"    next: {next_steps[0][:100]}")
+
+    current_supported = ledger_result["supported_claim_count"]
+    last_supported = state.get("last_supported_claim_count", 0)
+    stagnant_rounds = 0 if current_supported > last_supported else state.get("stagnant_rounds", 0) + 1
+
+    audit = {
+        "passed": ledger_result["answer_ready"],
+        "gaps": list(dict.fromkeys(gaps)),
+        "strategy_hints": next_steps,
+        "source_count": len(admitted),
+        "candidate_source_count": len(candidate_sources),
+        "structured_source_count": sum(
+            1
+            for source in admitted
+            if isinstance(source, dict) and source.get("kind") in {"table", "file", "json", "recipe_rows", "browser_table"}
+        ),
+        "ledger": ledger_result,
+    }
+
+    update = {
+        "evidence_ledger_result": ledger_result,
+        "admissible_sources": admitted,
+        "sources": admitted,
+        "evidence_audit": audit,
+        "iteration": iteration,
+        "stagnant_rounds": stagnant_rounds,
+        "last_supported_claim_count": current_supported,
+    }
+    if ledger_result["answer_ready"]:
+        update["plan"] = []
+    elif next_steps:
+        already_done = {str(c.get("step", "")).strip() for c in completed}
+        fresh_steps = [step for step in next_steps if step not in already_done]
+        if fresh_steps:
+            update["plan"] = fresh_steps + list(state.get("plan", []))
+        elif len(completed) < MAX_PLAN_STEPS and state.get("evidence_round", 0) < MAX_EVIDENCE_ROUNDS:
+            # Every proposed next_step duplicates a step already executed — the ledger likely
+            # failed to extract facts already present in fetched text, not that more fetching
+            # is needed. Route to a re-extraction pass instead of giving up immediately.
+            audit["dedup_stalled"] = True
+            update["evidence_audit"] = audit
+        else:
+            update |= _insufficient_evidence_update(ledger_result.get("reason", ""), audit["gaps"], audit, state)
+    else:
+        update |= _insufficient_evidence_update(ledger_result.get("reason", ""), audit["gaps"], audit, state)
+    return update
+
+
+async def evidence_challenge_node(state: AgentState, model: str, tools: list[dict], profile: Profile) -> dict:
+    """Challenge the ledger before allowing answer drafting."""
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    proof_requirements = _proof_requirements(requirements)
+    completion_criteria = list(proof_requirements.get("completion_criteria", []))
+    answer_mode = requirements.get("answer_mode", "strict")
+    quality_preferences = list(requirements.get("quality_preferences", []))
+    candidate_sources = list(state.get("candidate_sources") or state.get("sources", []))
+    sources_text, _valid_source_ids = _format_sources_for_llm(candidate_sources)
+    completed = state.get("completed_steps", [])
+    ledger_result = state.get("evidence_ledger_result", {})
+    available_tools = [t.get("function", {}).get("name", "") for t in tools if isinstance(t, dict)]
+    available_tools = [name for name in available_tools if name]
+    iteration = state["iteration"] + 1
+
+    print("  [CHALLENGE] Stress-testing evidence ledger...")
+    prompt = f"""QUESTION:
+{question}
+
+ANSWER_MODE:
+{answer_mode}
+
+PROOF_REQUIREMENTS (numbered — use these indices as requirement_index):
+{_numbered_requirements_block(completion_criteria)}
+
+PROOF_REQUIREMENTS (full):
+{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+AVAILABLE_TOOLS:
+{json.dumps(available_tools, ensure_ascii=False)}
+
+COMPLETED_STEPS:
+{json.dumps([c.get("step", "") for c in completed[-12:]], ensure_ascii=False, indent=2)}
+
+EVIDENCE_LEDGER:
+{json.dumps(ledger_result, ensure_ascii=False, indent=2)[:7000]}
+
+CANDIDATE SOURCES:
+{sources_text}
+
+Challenge the ledger and decide whether a final answer is permitted."""
+
+    raw = llm._ollama_chat_schema(
+        model,
+        [{"role": "user", "content": prompt}],
+        system=profile.evidence_challenge,
+        format_schema=_evidence_challenge_schema(len(completion_criteria)),
+    )
+    challenge = _normalize_evidence_challenge_result(_json_loads_best_effort(raw, {}), ledger_result, len(completion_criteria))
+    next_steps = challenge.get("next_steps", []) or list(ledger_result.get("next_steps", []) or [])
+    gaps = list(challenge.get("blocking_gaps", []))
+    if not gaps and not challenge["answer_permitted"] and ledger_result.get("global_missing"):
+        gaps = [str(gap) for gap in ledger_result.get("global_missing", []) if str(gap)]
+
+    print(f"  [CHALLENGE] answer_permitted={challenge['answer_permitted']}")
+    if gaps:
+        print(f"    blocks: {', '.join(gaps[:4])}")
+    if challenge.get("dropped_gaps"):
+        print(f"    dropped (no matching requirement): {', '.join(challenge['dropped_gaps'][:4])}")
+    if next_steps:
+        print(f"    next: {next_steps[0][:100]}")
+
+    audit = dict(state.get("evidence_audit", {}) or {})
+    audit["passed"] = challenge["answer_permitted"]
+    audit["gaps"] = list(dict.fromkeys(gaps))
+    audit["strategy_hints"] = next_steps[:4]
+    audit["challenge"] = challenge
+    audit.pop("dedup_stalled", None)
+
+    update = {
+        "evidence_challenge_result": challenge,
+        "evidence_audit": audit,
+        "iteration": iteration,
+    }
+    if challenge["answer_permitted"]:
+        update["plan"] = []
+    elif next_steps:
+        already_done = {str(c.get("step", "")).strip() for c in completed}
+        fresh_steps = [step for step in next_steps if step not in already_done]
+        if fresh_steps:
+            update["plan"] = fresh_steps + list(state.get("plan", []))
+        elif len(completed) < MAX_PLAN_STEPS and state.get("evidence_round", 0) < MAX_EVIDENCE_ROUNDS:
+            audit["dedup_stalled"] = True
+            update["evidence_audit"] = audit
+        else:
+            update |= _insufficient_evidence_update(challenge.get("reason", ""), audit["gaps"], audit, state)
+    else:
+        update |= _insufficient_evidence_update(challenge.get("reason", ""), audit["gaps"], audit, state)
+    return update
+
+
+async def evidence_reextract_node(state: AgentState, model: str, tools: list[dict], profile: Profile) -> dict:
+    """Re-mine already-fetched candidate_sources without issuing new tool calls.
+
+    Reached only when the ledger/challenge's proposed next_steps exactly duplicated steps
+    already executed — that means the ledger/challenge failed to extract facts already
+    present in fetched text, not that more fetching is needed (see evidence_ledger_node /
+    evidence_challenge_node's dedup_stalled branch).
+    """
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    proof_requirements = _proof_requirements(requirements)
+    completion_criteria = list(proof_requirements.get("completion_criteria", []))
+    answer_mode = requirements.get("answer_mode", "strict")
+    quality_preferences = list(requirements.get("quality_preferences", []))
+    candidate_sources = list(state.get("candidate_sources") or state.get("sources", []))
+    sources_text, _ = _format_sources_for_llm(candidate_sources)
+    iteration = state["iteration"] + 1
+
+    print("  [REEXTRACT] Re-mining already-fetched sources (no new tool calls)...")
+    prompt = f"""QUESTION:
+{question}
+
+ANSWER_MODE:
+{answer_mode}
+
+PROOF_REQUIREMENTS (numbered — use these indices as requirement_index):
+{_numbered_requirements_block(completion_criteria)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+CANDIDATE SOURCES (already fetched — do not propose fetching any of these again):
+{sources_text}
+
+The previous evidence ledger could not fully support the requirements from these sources, and its own
+proposed next tool steps duplicated steps already executed. Re-read the CANDIDATE SOURCES content
+carefully and mine it harder for claims you may have missed the first time. Propose NO next_steps —
+build the evidence ledger from what is already fetched only."""
+
+    raw = llm._ollama_chat_schema(
+        model,
+        [{"role": "user", "content": prompt}],
+        system=profile.evidence_ledger,
+        format_schema=_evidence_ledger_schema(len(completion_criteria)),
+    )
+    ledger_result = _normalize_evidence_ledger_result(
+        _json_loads_best_effort(raw, {}), candidate_sources, completion_criteria, answer_mode
+    )
+    admitted = ledger_result["admissible_sources"]
+    gaps = [item["missing"] for item in ledger_result.get("ledger", []) if item.get("missing")]
+    gaps.extend(ledger_result.get("global_missing", []))
+    print(
+        "  [REEXTRACT] "
+        f"supported claims {ledger_result['supported_claim_count']}; "
+        f"answer_ready={ledger_result['answer_ready']}"
+    )
+
+    audit = dict(state.get("evidence_audit", {}) or {})
+    audit["passed"] = ledger_result["answer_ready"]
+    audit["gaps"] = list(dict.fromkeys(gaps))
+    audit["ledger"] = ledger_result
+    audit.pop("dedup_stalled", None)
+
+    update = {
+        "evidence_ledger_result": ledger_result,
+        "admissible_sources": admitted,
+        "sources": admitted,
+        "evidence_audit": audit,
+        "iteration": iteration,
+    }
+    if ledger_result["answer_ready"]:
+        update["plan"] = []
+        print("  [REEXTRACT] recovered supporting evidence from already-fetched sources")
+    else:
+        reason = ledger_result.get("reason", "") or "Re-mining already-fetched sources did not surface enough support."
+        update |= _insufficient_evidence_update(reason, audit["gaps"], audit, state)
+    return update
+
+
+async def evaluate_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Decide: CONTINUE, REPLAN, or DONE."""
+    plan = state["plan"]
+    completed = state["completed_steps"]
+    scratchpad = state["scratchpad"]
+    task = state["task"]
+    iteration = state["iteration"] + 1
+
+    if not plan:
+        audit = _audit_evidence_state(state)  # type: ignore[arg-type]
+        print(f"  [EVAL] sources in state: {len(state.get('sources', []))}")
+        if audit.get("passed"):
+            print("  [EVAL] Evidence audit passed → ANSWER")
+            return {"evidence_audit": audit, "iteration": iteration}
+        print("  [EVAL] Evidence audit failed → STRATEGY")
+        for gap in audit.get("gaps", [])[:4]:
+            print(f"    gap: {gap[:120]}")
+        search_memory = _merge_search_memory(state.get("search_memory"))
+
+        # Reflexion: LLM diagnoses why search failed and what to try next
+        reflection_input = f"""Task: {_effective_question(state['task'])}
+
+Gaps identified:
+{json.dumps(audit.get('gaps', []), ensure_ascii=False)}
+
+Queries already attempted:
+{json.dumps(search_memory.get('attempted_queries', []), ensure_ascii=False)}
+
+Sources collected: {len(state.get('sources', []))}
+Scratchpad (last 1500 chars):
+{state.get('scratchpad', '')[-1500:]}
+
+In 2-3 sentences, diagnose WHY the search failed and what specific approach should fix it next round."""
+
+        reflection_response = llm._ollama_chat(
+            model,
+            [{"role": "user", "content": reflection_input}],
+            tools=None, system="You are a search strategist. Be concise and specific. Output plain text only.",
+        )
+        reflection = (reflection_response.get("content") or "").strip()
+        if reflection:
+            print(f"  [REFLECT] {reflection[:200]}")
+            search_memory.setdefault("reflections", []).append(reflection)
+
+        verification = {
+            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "claim_checks": [],
+            "task_complete": False,
+            "coverage": {
+                "requirements_addressed": [],
+                "overall_status": "missing",
+            },
+            "gaps": audit.get("gaps", []),
+            "insufficient_evidence": True,
+            "audit": audit,
+        }
+        return {
+            "evidence_audit": audit,
+            "verification_result": verification,
+            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "search_memory": search_memory,
+            "evidence_round": state.get("evidence_round", 0) + 1,
+            "iteration": iteration,
+        }
+
+    # if we've done too many steps, force answer
+    replan_count = state.get("replan_count", 0)
+    if len(completed) >= MAX_PLAN_STEPS or replan_count >= 3:
+        reason = "max steps" if len(completed) >= MAX_PLAN_STEPS else "too many replans"
+        print(f"  [EVAL] {reason} → DONE")
+        return {"plan": [], "iteration": iteration}
+
+    # ask LLM to evaluate
+    search_memory = _merge_search_memory(state.get("search_memory"))
+    requirements = _normalize_requirements(state.get("requirements_result"), _effective_question(task))
+    eval_input = f"""Task: {task}
+
+TASK_REQUIREMENTS (must not be abandoned during replan):
+{json.dumps(requirements.get('completion_criteria', []), ensure_ascii=False)}
+
+Completed steps ({len(completed)} total):
+{json.dumps([c['step'] for c in completed[-10:]], ensure_ascii=False)}
+
+Sources collected: {len(state.get('sources', []))}
+Queries attempted ({len(search_memory.get('attempted_queries', []))} total): {json.dumps(search_memory.get('attempted_queries', [])[-6:], ensure_ascii=False)}
+Pending generated queries: {json.dumps(search_memory.get('next_queries', [])[:4], ensure_ascii=False)}
+Open gaps: {json.dumps(search_memory.get('open_gaps', [])[:5], ensure_ascii=False)}
+
+Remaining plan ({len(plan)} steps):
+{json.dumps(plan[:8], ensure_ascii=False)}
+
+Summary of findings (last 2000 chars):
+{scratchpad[-2000:]}"""
+
+    print("  [EVAL] Assessing progress...", end=" ", flush=True)
+    response = llm._ollama_chat(model, [{"role": "user", "content": eval_input}], tools=None, system=profile.eval, json_mode=True)
+    content = response.get("content", "{}")
+
+    decision = _json_loads_best_effort(content, {"decision": "CONTINUE", "reason": "parse error"})
+
+    d = decision.get("decision", "CONTINUE").upper()
+    print(d)
+
+    if d == "REPLAN":
+        if profile.uses_search_memory:
+            # Build plan from search_memory instead of LLM new_plan:
+            # LLM decides WHETHER to replan; plan construction is deterministic
+            # to avoid malformed/duplicate queries from LLM free-form generation.
+            pending_queries = search_memory.get("next_queries", [])
+            attempted = {q.lower() for q in search_memory.get("attempted_queries", [])}
+            fresh_queries = [q for q in pending_queries if q.lower() not in attempted]
+            if not fresh_queries:
+                fresh_queries = [_effective_question(task)]
+            normalized = [f"web_search: {q}" for q in fresh_queries[:4]]
+            search_memory["next_queries"] = []
+            print(f"  [REPLAN] New plan: {len(normalized)} steps")
+            for i, s in enumerate(normalized, 1):
+                print(f"    {i}. {s[:100]}")
+            return {"plan": normalized, "replan_count": replan_count + 1, "search_memory": search_memory, "iteration": iteration}
+        # generic: one fresh free-form attempt at the task
+        normalized = [profile.fallback_step(_effective_question(task))]
+        print(f"  [REPLAN] New plan: {len(normalized)} steps")
+        return {"plan": normalized, "replan_count": replan_count + 1, "iteration": iteration}
+
+    if d == "DONE":
+        return {"plan": [], "iteration": iteration}
+
+    return {"iteration": iteration}
+
+
+def route_after_execute(state: AgentState) -> str:
+    """Route after each execute step — update the evidence ledger when plan is exhausted."""
+    plan = state["plan"]
+    completed = state["completed_steps"]
+    if len(completed) >= MAX_PLAN_STEPS:
+        return "evidence_ledger"
+    if not plan:
+        return "evidence_ledger"
+    return "execute"
+
+
+def route_after_evidence_ledger(state: AgentState) -> str:
+    if state.get("evidence_audit", {}).get("dedup_stalled"):
+        return "evidence_reextract"
+    return "evidence_challenge"
+
+
+def route_after_evidence_reextract(state: AgentState) -> str:
+    audit = state.get("evidence_audit", {})
+    if audit and audit.get("passed"):
+        return "evidence_challenge"
+    return "assimilate"
+
+
+def route_after_evidence_challenge(state: AgentState) -> str:
+    audit = state.get("evidence_audit", {})
+    if audit.get("dedup_stalled"):
+        return "evidence_reextract"
+    if audit and audit.get("passed"):
+        return "answer"
+    verification = state.get("verification_result", {})
+    if (
+        verification.get("insufficient_evidence") is True
+        and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
+        and not state.get("plan")
+    ):
+        return "assimilate"
+    if state.get("plan") and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS:
+        return "execute"
+    if (
+        state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
+        and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS
+        and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
+    ):
+        return "strategy"
+    return "assimilate"
+
+
+def route_after_evaluate(state: AgentState) -> str:
+    plan = state["plan"]
+    completed = state["completed_steps"]
+
+    audit = state.get("evidence_audit", {})
+    if (
+        audit
+        and audit.get("passed") is False
+        and state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
+        and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
+    ):
+        return "strategy"
+
+    if not plan or len(completed) >= MAX_PLAN_STEPS:
+        return "answer"
+
+    return "execute"
+
+
+def route_after_plan(state: AgentState) -> str:
+    search_memory = _merge_search_memory(state.get("search_memory"))
+    if (
+        search_memory.get("search_exhausted")
+        and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
+    ):
+        return "assimilate"
+    if state["plan"]:
+        return "execute"
+    return "answer"
+
+
+def route_after_verify(state: AgentState) -> str:
+    final_answer = state.get("final_answer", "")
+    draft = state.get("draft_result", {}) if isinstance(state.get("draft_result"), dict) else {}
+
+    has_real_answer = bool(final_answer) and final_answer != INSUFFICIENT_EVIDENCE_MESSAGE
+    draft_answer = draft.get("answer", "") if isinstance(draft, dict) else ""
+    has_valid_draft = (
+        bool(draft_answer)
+        and draft_answer != INSUFFICIENT_EVIDENCE_MESSAGE
+        and not draft.get("insufficient_evidence")
+        and bool(state.get("sources"))
+    )
+
+    if has_real_answer or has_valid_draft:
+        return "assimilate"
+
+    search_memory = _merge_search_memory(state.get("search_memory"))
+    if search_memory.get("search_exhausted"):
+        return "assimilate"
+
+    if not state.get("sources"):
+        if (
+            state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
+            and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS
+            and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
+        ):
+            return "strategy"
+    return "assimilate"
+
+
+async def assimilate_node(state: AgentState, _model: str, _tools: list[dict]) -> dict:
+    """Persist research experience — always, regardless of outcome."""
+    iteration = state["iteration"] + 1
+    print("  [ASSIMILATE] Recording research experience...")
+    _assimilate_research(state)  # type: ignore[arg-type]
+    return {"iteration": iteration}
+
+
+async def strategy_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Evolve search queries from live search memory and verifier feedback."""
+    iteration = state["iteration"] + 1
+    if not profile.uses_search_memory:
+        # Generic mode has no web-search query space to evolve; plan_node replans from
+        # scratch using the reflection already recorded by evaluate_node.
+        print("  [STRATEGY] Re-planning from scratch (generic mode)...")
+        return {"iteration": iteration}
+
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    memory = _merge_search_memory(state.get("search_memory"))
+    verification = state.get("verification_result", {})
+    evidence_audit = state.get("evidence_audit", {})
+    source_count = len(state.get("sources", []))
+    store = _memmod._get_research_store()
+    champion = store.best_strategy()
+
+    reflections = memory.get("reflections", [])
+    reflection_block = ""
+    if reflections:
+        reflection_block = f"\nREFLECTION (why previous search failed):\n{chr(10).join(f'- {r}' for r in reflections[-3:])}\n"
+
+    prompt = f"""QUESTION:
+{question}
+
+SOURCE_COUNT:
+{source_count}
+
+TASK_REQUIREMENTS:
+{json.dumps(requirements, ensure_ascii=False, indent=2)}
+
+VERIFIER_FEEDBACK:
+{json.dumps(verification, ensure_ascii=False, indent=2)[:3000]}
+
+EVIDENCE_AUDIT:
+{json.dumps(evidence_audit, ensure_ascii=False, indent=2)[:3000]}
+{reflection_block}
+SEARCH_MEMORY:
+{_format_search_memory_for_prompt(memory)}
+
+Propose the next search strategy."""
+
+    print("  [STRATEGY] Evolving search queries...")
+    response = llm._ollama_chat(
+        model,
+        [{"role": "user", "content": prompt}],
+        tools=None, json_mode=True,
+        system=profile.strategy,
+        temperature=0.4,
+    )
+    result = _json_loads_best_effort(response.get("content", ""), {})
+    next_queries = result.get("next_queries") if isinstance(result, dict) else None
+    if not isinstance(next_queries, list):
+        next_queries = []
+
+    attempted = {query.lower() for query in memory["attempted_queries"]}
+    candidates = []
+    if champion:
+        candidates.append({"origin": "exploit", "desc": champion.get("desc", ""), "success_rate": champion.get("success_rate", 0.0)})
+    note = result.get("strategy_note") if isinstance(result, dict) else ""
+    hypothesis = str(result.get("search_hypothesis") or "").strip() if isinstance(result, dict) else ""
+    failure_diagnosis = str(result.get("failure_diagnosis") or "").strip() if isinstance(result, dict) else ""
+    mutation_dimension = str(result.get("mutation_dimension") or "").strip() if isinstance(result, dict) else ""
+    exhausted_direction = str(result.get("exhausted_direction") or "").strip() if isinstance(result, dict) else ""
+    if hypothesis:
+        _append_unique(memory["search_hypotheses"], hypothesis[:500])
+    if failure_diagnosis:
+        _append_unique(memory["failure_diagnoses"], failure_diagnosis[:500])
+    if mutation_dimension:
+        _append_unique(memory["mutation_history"], mutation_dimension[:200])
+    if exhausted_direction:
+        _append_unique(memory["exhausted_directions"], exhausted_direction[:300])
+    if note:
+        candidates.append({"origin": "explore", "desc": str(note)[:300]})
+    candidates.append({"origin": "fallback", "desc": "Use a different source-discovery angle and fetch evidence before answering."})
+
+    fresh_queries = []
+    for query in next_queries:
+        query = str(query).strip()
+        if query and query.lower() not in attempted and query not in fresh_queries:
+            fresh_queries.append(query)
+
+    if not note:
+        note = "No fresh search strategy was proposed."
+    memory["strategy_notes"].append(str(note)[:500])
+    memory["next_queries"] = fresh_queries[:4]
+    memory["strategy_candidates"] = candidates
+    memory["current_strategy"] = candidates[0]["desc"] if candidates else str(note)
+
+    print(f"  [STRATEGY] Next queries: {len(memory['next_queries'])}")
+    for i, query in enumerate(memory["next_queries"], 1):
+        print(f"    {i}. {query[:100]}")
+
+    if not memory["next_queries"]:
+        memory["search_exhausted"] = True
+        audit = dict(evidence_audit or {})
+        gaps = list(audit.get("gaps", []) or [])
+        if failure_diagnosis:
+            gaps.append(failure_diagnosis)
+        audit["passed"] = False
+        audit["gaps"] = list(dict.fromkeys(gaps))
+        update = _insufficient_evidence_update(str(note), audit["gaps"], audit, state)
+        update["search_memory"] = memory
+        update["iteration"] = iteration
+        print("  [STRATEGY] No fresh search direction remains.")
+        return update
+
+    memory["search_exhausted"] = False
+    return {"search_memory": memory, "iteration": iteration}
+
+
+async def answer_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Draft a source-grounded structured answer."""
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    proof_requirements = _proof_requirements(requirements)
+    quality_preferences = list(requirements.get("quality_preferences", []))
+    sources_text, valid_source_ids = _format_sources_for_llm(state.get("sources", []))
+    iteration = state["iteration"] + 1
+
+    print(f"\n  [ANSWER] Drafting from {len(valid_source_ids)} sources...")
+    if not valid_source_ids:
+        draft = {
+            "answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "claims": [],
+            "coverage": {
+                "requirements_addressed": [],
+                "overall_status": "missing",
+            },
+            "insufficient_evidence": True,
+        }
+        return {"draft_result": draft, "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE, "iteration": iteration}
+
+    prompt = f"""QUESTION:
+{question}
+
+PROOF_REQUIREMENTS:
+{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+SOURCES:
+{sources_text}
+
+Answer only from SOURCES and satisfy PROOF_REQUIREMENTS. Use NON_BLOCKING_QUALITY_PREFERENCES only when supported."""
+
+    # Prose-first: rich, reliable prose with inline [n] citations. A large structured
+    # JSON envelope is fragile on content-heavy answers, so we draft prose and verify
+    # the prose against the same bounded source set (see verify_node).
+    prose = llm._ollama_chat(
+        model,
+        [{"role": "user", "content": prompt}],
+        tools=None,
+        system=profile.answer_prose,
+    ).get("content", "").strip()
+
+    if prose and prose != INSUFFICIENT_EVIDENCE_MESSAGE:
+        draft = {
+            "answer": prose,
+            "claims": [],
+            "coverage": {"requirements_addressed": [], "overall_status": "partial"},
+            "insufficient_evidence": False,
+            "salvaged_prose": True,
+        }
+    else:
+        draft = {
+            "answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "claims": [],
+            "coverage": {"requirements_addressed": [], "overall_status": "missing"},
+            "insufficient_evidence": True,
+        }
+
+    return {"draft_result": draft, "iteration": iteration}
+
+
+async def verify_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+    """Verify the drafted answer against the same bounded source set."""
+    question = _effective_question(state["task"])
+    requirements = _normalize_requirements(state.get("requirements_result"), question)
+    proof_requirements = _proof_requirements(requirements)
+    quality_preferences = list(requirements.get("quality_preferences", []))
+    sources_text, valid_source_ids = _format_sources_for_llm(state.get("sources", []))
+    draft = state.get("draft_result", {})
+    iteration = state["iteration"] + 1
+
+    print("  [VERIFY] Checking claims against sources...")
+    if draft.get("salvaged_prose") is True and valid_source_ids:
+        # Prose answer → verify in prose: model re-checks every statement and inline
+        # citation against the bounded source set and returns a corrected prose answer.
+        # Prose-in/prose-out avoids the fragile JSON envelope while keeping real grounding.
+        print("  [VERIFY] Grounding prose answer against sources...")
+        verify_prompt = f"""PROOF_REQUIREMENTS:
+{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+SOURCES:
+{sources_text}
+
+DRAFT_ANSWER:
+{draft.get("answer", "")}
+
+Return the corrected, fully-grounded answer."""
+        verified = llm._ollama_chat(
+            model,
+            [{"role": "user", "content": verify_prompt}],
+            tools=None,
+            system=profile.verify_prose,
+        ).get("content", "").strip()
+
+        # If verification produced nothing usable, fall back to the original prose draft
+        # rather than losing a grounded answer to a flaky verify call.
+        if not verified:
+            verified = draft.get("answer", "")
+        insufficient = (not verified) or verified == INSUFFICIENT_EVIDENCE_MESSAGE
+
+        # Small JSON verdict: a compact, machine-readable quality report about the prose
+        # answer. No answer text inside, so it parses reliably (unlike the old big envelope).
+        coverage_complete = True
+        missing: list[str] = []
+        verdict_notes: list[str] = []
+        if not insufficient:
+            verdict_prompt = f"""PROOF_REQUIREMENTS:
+{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
+
+NON_BLOCKING_QUALITY_PREFERENCES:
+{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
+
+SOURCES:
+{sources_text}
+
+FINAL_ANSWER:
+{verified}
+
+Return the compact JSON verdict."""
+            verdict_raw = _ollama_chat_json(
+                model,
+                [{"role": "user", "content": verdict_prompt}],
+                system=profile.verify_verdict,
+            )
+            verdict = _json_loads_best_effort(verdict_raw, {})
+            if isinstance(verdict, dict):
+                coverage_complete = bool(verdict.get("coverage_complete", True))
+                missing = [str(m) for m in verdict.get("missing", []) if m]
+                verdict_notes = [str(n) for n in verdict.get("notes", []) if n]
+            if missing:
+                print(f"  [VERIFY] Coverage gaps: {', '.join(missing[:4])}")
+
+        verification = {
+            "final_answer": verified,
+            "claim_checks": [],
+            "task_complete": (not insufficient) and coverage_complete,
+            "coverage": {"overall_status": "complete" if coverage_complete else "partial"},
+            "gaps": missing,
+            "notes": verdict_notes,
+            "insufficient_evidence": insufficient,
+        }
+        update = {
+            "verification_result": verification,
+            "final_answer": verified,
+            "iteration": iteration,
+        }
+        if insufficient:
+            update["evidence_round"] = state.get("evidence_round", 0) + 1
+        return update
+    if not valid_source_ids or draft.get("insufficient_evidence") is True:
+        next_round = state.get("evidence_round", 0) + 1
+        verification = {
+            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "claim_checks": [],
+            "task_complete": False,
+            "coverage": {
+                "requirements_addressed": [],
+                "overall_status": "missing",
+            },
+            "gaps": ["No source-backed draft answer is available."],
+            "insufficient_evidence": True,
+        }
+        return {
+            "verification_result": verification,
+            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+            "evidence_round": next_round,
+            "iteration": iteration,
+        }
+
+    # Unreachable in normal flow: answer_node always produces either a salvaged_prose
+    # draft (handled above) or an insufficient_evidence draft (handled above). This is a
+    # safety net for any unexpected draft shape.
+    verification = {
+        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+        "task_complete": False,
+        "gaps": ["No usable answer draft."],
+        "insufficient_evidence": True,
+    }
+    return {
+        "verification_result": verification,
+        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+        "evidence_round": state.get("evidence_round", 0) + 1,
+        "iteration": iteration,
+    }
+
+
+def build_graph(model: str, tools: list[dict], mcp_session: ClientSession | None = None, fast_model: str = "", profile: Profile | None = None):
+    profile = profile or FOOTNOTE_PROFILE
+    graph = StateGraph(AgentState)
+
+    async def _requirements(state): return await requirements_node(state, model, tools, profile)
+    async def _plan(state): return await plan_node(state, model, tools, profile)
+    _fast = fast_model or model
+    async def _execute(state): return await execute_node(state, model, tools, profile, mcp_session=mcp_session, fast_model=_fast)
+    async def _evidence_ledger(state): return await evidence_ledger_node(state, model, tools, profile)
+    async def _evidence_challenge(state): return await evidence_challenge_node(state, model, tools, profile)
+    async def _evidence_reextract(state): return await evidence_reextract_node(state, model, tools, profile)
+    async def _evaluate(state): return await evaluate_node(state, model, tools, profile)
+    async def _answer(state): return await answer_node(state, model, tools, profile)
+    async def _verify(state): return await verify_node(state, model, tools, profile)
+    async def _strategy(state): return await strategy_node(state, model, tools, profile)
+    async def _assimilate(state): return await assimilate_node(state, model, tools)
+
+    graph.add_node("requirements", _requirements)
+    graph.add_node("plan", _plan)
+    graph.add_node("execute", _execute)
+    graph.add_node("evidence_ledger", _evidence_ledger)
+    graph.add_node("evidence_challenge", _evidence_challenge)
+    graph.add_node("evidence_reextract", _evidence_reextract)
+    graph.add_node("evaluate", _evaluate)
+    graph.add_node("answer", _answer)
+    graph.add_node("verify", _verify)
+    graph.add_node("strategy", _strategy)
+    graph.add_node("assimilate", _assimilate)
+
+    graph.set_entry_point("requirements")
+
+    graph.add_edge("requirements", "plan")
+    graph.add_conditional_edges("plan", route_after_plan, {"execute": "execute", "answer": "answer", "assimilate": "assimilate"})
+    graph.add_conditional_edges("execute", route_after_execute, {"execute": "execute", "evidence_ledger": "evidence_ledger"})
+    graph.add_conditional_edges(
+        "evidence_ledger",
+        route_after_evidence_ledger,
+        {"evidence_challenge": "evidence_challenge", "evidence_reextract": "evidence_reextract"},
+    )
+    graph.add_conditional_edges(
+        "evidence_challenge",
+        route_after_evidence_challenge,
+        {
+            "execute": "execute",
+            "answer": "answer",
+            "strategy": "strategy",
+            "assimilate": "assimilate",
+            "evidence_reextract": "evidence_reextract",
+        },
+    )
+    graph.add_conditional_edges(
+        "evidence_reextract",
+        route_after_evidence_reextract,
+        {"evidence_challenge": "evidence_challenge", "assimilate": "assimilate"},
+    )
+    graph.add_conditional_edges("evaluate", route_after_evaluate, {"execute": "execute", "answer": "answer", "strategy": "strategy"})
+
+    graph.add_edge("answer", "verify")
+    graph.add_conditional_edges("verify", route_after_verify, {"strategy": "strategy", "assimilate": "assimilate"})
+    graph.add_edge("strategy", "plan")
+    graph.add_edge("assimilate", END)
+
+    return graph.compile()
