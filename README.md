@@ -6,7 +6,7 @@
 
 LLMFlow-Search is a local LLM web search agent powered by Ollama. It adds local AI web search and controlled internet access through MCP, runs multi-step web research, and returns a source-grounded answer instead of sending the question to a hosted research model.
 
-Use it as a self-hosted AI search tool, an open-source AI research assistant, or a terminal-based local Perplexity alternative. The agent plans searches, reads pages through [`footnote-mcp`](https://github.com/KazKozDev/footnote-mcp), challenges weak evidence, verifies the final prose against the admitted sources, and writes a citation-backed PDF only when the requested coverage is complete.
+Built on LangGraph, LLMFlow-Search works as a self-hosted AI search tool, an open-source AI research assistant, or a terminal-based local Perplexity alternative. The agent plans searches, reads pages through [`footnote-mcp`](https://github.com/KazKozDev/footnote-mcp), challenges weak evidence, verifies the final prose against the admitted sources, and writes a citation-backed PDF only when the requested coverage is complete.
 
 ```bash
 # macOS
