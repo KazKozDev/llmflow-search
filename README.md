@@ -10,6 +10,12 @@ LLMFlow-Search adds local AI web search and controlled internet access through M
 
 Built on LangGraph, LLMFlow-Search works as a self-hosted AI search tool, an open-source AI research assistant, or a terminal-based local Perplexity alternative. The agent plans searches, reads pages through [`footnote-mcp`](https://github.com/KazKozDev/footnote-mcp), challenges weak evidence, verifies the final prose against the admitted sources, and writes a citation-backed PDF only when the requested coverage is complete.
 
+<p align="center">
+  <img src="assets/llmflow-search-demo.gif" alt="LLMFlow-Search running a source-grounded web research session in the terminal" width="100%">
+</p>
+
+<p align="center"><sub>Real terminal run: local Ollama model → MCP web search → evidence challenge → verified answer with an official source.</sub></p>
+
 ```bash
 # macOS
 git clone https://github.com/KazKozDev/footnote-mcp.git
