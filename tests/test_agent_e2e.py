@@ -23,6 +23,7 @@ from llmflow_search.prompts import (
     EVIDENCE_CHALLENGE_SYSTEM_PROMPT,
     EVIDENCE_LEDGER_SYSTEM_PROMPT,
 )
+from llmflow_search.tool_steps import _tool_call_from_schema_step
 
 
 def test_agent_graph_completes_with_fake_model_and_fake_tool(monkeypatch):
@@ -349,6 +350,52 @@ def test_terminal_insufficient_evidence_does_not_reenter_strategy():
     assert route_after_evidence_challenge(state) == "assimilate"
 
 
+def test_terminal_insufficient_evidence_routes_supported_sources_to_partial_answer():
+    state = {
+        "task": "Return every requested item",
+        # This reproduces the original blank-output bug: the challenge found a fresh
+        # next step, but the executor cannot run it because the 40-step cap is reached.
+        "plan": ["web_search: one more date check"],
+        "completed_steps": [{"step": f"web_search: query {i}"} for i in range(40)],
+        "sources": [{"title": "Supported source", "url": "https://example.com/source", "content": "Supported."}],
+        "evidence_audit": {"passed": False, "gaps": ["Some requested items remain unverified."]},
+        "verification_result": {"insufficient_evidence": True},
+        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
+        "evidence_round": 1,
+    }
+
+    assert route_after_evidence_challenge(state) == "answer"
+
+
+def test_answer_node_requests_explicit_supported_partial_answer(monkeypatch):
+    captured_prompt = ""
+
+    def fake_chat(model, messages, **kwargs):
+        nonlocal captured_prompt
+        captured_prompt = messages[0]["content"]
+        return {"content": "Partial answer: one supported finding [1]."}
+
+    monkeypatch.setattr(llm, "_ollama_chat", fake_chat)
+    state = {
+        "task": "Return every requested item",
+        "requirements_result": {
+            "completion_criteria": ["Include every requested item."],
+            "quality_preferences": [],
+        },
+        "sources": [{"title": "Source", "url": "https://example.com/source", "content": "One finding."}],
+        "evidence_audit": {"passed": False, "gaps": ["Some requested items remain unverified."]},
+        "iteration": 0,
+    }
+
+    update = asyncio.run(nodes_module.answer_node(state, "fake-model", [], FOOTNOTE_PROFILE))
+
+    assert update["draft_result"]["answer"].startswith("Partial answer:")
+    assert update["draft_result"]["insufficient_evidence"] is False
+    assert "PARTIAL_ANSWER_MODE:\ntrue" in captured_prompt
+    assert "Some requested items remain unverified." in captured_prompt
+    assert "never fill a gap with outside knowledge" in captured_prompt
+
+
 def test_agent_writes_debug_report_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("LLMFLOW_SEARCH_DEBUG_REPORTS", "1")
     monkeypatch.setenv("LLMFLOW_SEARCH_DEBUG_REPORT_DIR", str(tmp_path))
@@ -393,6 +440,118 @@ def test_agent_accepts_direct_json_fetch_steps():
     call = agent_module._tool_call_from_step("web_fetch_json: https://example.com/api.json")
 
     assert call == {"function": {"name": "web_fetch_json", "arguments": {"url": "https://example.com/api.json"}}}
+
+
+def test_live_schema_resolves_previously_unhardcoded_single_argument_tool():
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "papers_search",
+            "description": "Search papers.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
+        },
+    }]
+
+    call = _tool_call_from_schema_step("papers_search: retrieval augmented generation", tools)
+
+    assert call == {
+        "function": {
+            "name": "papers_search",
+            "arguments": {"query": "retrieval augmented generation"},
+        }
+    }
+
+
+def test_live_schema_resolves_multi_argument_tool_from_json_without_hardcoding():
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "corroborate_claim",
+            "description": "Corroborate a claim.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "excerpts": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["claim", "excerpts"],
+            },
+        },
+    }]
+
+    call = _tool_call_from_schema_step(
+        'corroborate_claim: {"claim":"GDP grew","excerpts":["Source A","Source B"]}',
+        tools,
+    )
+
+    assert call["function"]["name"] == "corroborate_claim"
+    assert call["function"]["arguments"]["excerpts"] == ["Source A", "Source B"]
+    assert _tool_call_from_schema_step("corroborate_claim: GDP grew", tools) is None
+
+
+def test_plan_step_objects_preserve_structured_arguments_as_json():
+    steps = nodes_module._steps_from_plan_objects(json.dumps({
+        "steps": [{
+            "tool": "export_dataset",
+            "arguments": {"rows": [{"date": "2026-08-05"}], "format": "csv"},
+        }]
+    }))
+
+    assert steps == [
+        'export_dataset: {"rows":[{"date":"2026-08-05"}],"format":"csv"}'
+    ]
+
+
+def test_planner_receives_catalog_for_every_live_mcp_tool(monkeypatch):
+    captured = ""
+
+    def fake_chat(model, messages, **kwargs):
+        nonlocal captured
+        captured = messages[0]["content"]
+        return {"content": json.dumps({"steps": [{"tool": "web_screenshot", "arg": "{}"}]})}
+
+    monkeypatch.setattr(llm, "_ollama_chat", fake_chat)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "papers_search",
+                "description": "Search papers.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "web_screenshot",
+                "description": "Capture a screenshot.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+    state = {
+        "task": "Capture the current browser page",
+        "conversation_context": "",
+        "requirements_result": {},
+        "plan": [],
+        "iteration": 0,
+        "evidence_round": 0,
+        "search_memory": agent_module._default_search_memory(),
+    }
+
+    update = asyncio.run(nodes_module.plan_node(state, "fake-model", tools, GENERIC_PROFILE))
+
+    assert "papers_search(query*:string)" in captured
+    assert "web_screenshot()" in captured
+    assert update["plan"] == ["web_screenshot: {}"]
 
 
 def test_strategy_plan_uses_memory_queries_as_search_steps():
@@ -442,7 +601,7 @@ def test_execute_dedups_web_search_batch_and_runs_sequentially(monkeypatch):
         "iteration": 0,
     }
 
-    update = asyncio.run(execute_node(state, "main", [], FOOTNOTE_PROFILE, fast_model="fast"))
+    update = asyncio.run(execute_node(state, "main", [], FOOTNOTE_PROFILE))
 
     assert calls == [("web_search", "repeated query"), ("web_search", "different query")]
     assert [step["step"] for step in update["completed_steps"]] == [
@@ -946,6 +1105,64 @@ def test_evidence_ledger_roundup_mode_answer_ready_from_source_count():
     assert result_two["answer_ready"] is False
 
 
+def test_evidence_ledger_roundup_does_not_require_one_row_per_requirement():
+    sources = [
+        {"title": "A", "url": "https://example.com/a", "content": "..."},
+        {"title": "B", "url": "https://example.com/b", "content": "..."},
+        {"title": "C", "url": "https://example.com/c", "content": "..."},
+    ]
+    completion_criteria = ["The items are current.", "The items match the requested subject."]
+    raw = {
+        "answer_ready": False,
+        "ledger": [{
+            "claim_id": "current_requested_items",
+            "requirement_index": 0,
+            "support_status": "supported",
+            "support_level": "supported",
+            "can_use_in_answer": True,
+            "source_ids": [1, 2, 3],
+        }],
+        "global_missing": [],
+        "next_steps": [],
+    }
+
+    result = _normalize_evidence_ledger_result(raw, sources, completion_criteria, "roundup")
+
+    assert result["admissible_count"] == 3
+    assert result["answer_ready"] is True
+
+
+def test_evidence_ledger_roundup_accepts_several_supported_claims_from_one_source():
+    sources = [{"title": "Requested items", "url": "https://example.com/items", "content": "..."}]
+    completion_criteria = [
+        "The answer contains several requested items.",
+        "The items are current.",
+    ]
+
+    def ledger_row(claim_id, requirement_index):
+        return {
+            "claim_id": claim_id,
+            "requirement_index": requirement_index,
+            "support_status": "supported",
+            "support_level": "supported",
+            "can_use_in_answer": True,
+            "source_ids": [1],
+        }
+
+    raw = {
+        "answer_ready": False,
+        "ledger": [ledger_row("news_1", 0), ledger_row("news_2", 0), ledger_row("freshness", 1)],
+        "global_missing": [],
+        "next_steps": [],
+    }
+
+    result = _normalize_evidence_ledger_result(raw, sources, completion_criteria, "roundup")
+
+    assert result["supported_claim_count"] == 3
+    assert result["admissible_count"] == 1
+    assert result["answer_ready"] is True
+
+
 def test_evidence_ledger_dedup_stalled_routes_to_reextract(monkeypatch):
     def fake_chat(model, messages, tools=None, system="", temperature=0, num_predict=32768, format_schema=None, json_mode=False):
         return {"content": json.dumps({
@@ -984,6 +1201,102 @@ def test_route_after_evidence_reextract_returns_challenge_when_recovered():
 
 def test_route_after_evidence_reextract_returns_assimilate_when_not_recovered():
     assert route_after_evidence_reextract({"evidence_audit": {"passed": False}}) == "assimilate"
+
+
+def test_route_after_evidence_reextract_returns_partial_answer_when_supported_sources_remain():
+    state = {
+        "evidence_audit": {"passed": False},
+        "sources": [{"url": "https://example.com/supported", "content": "Supported fact."}],
+    }
+
+    assert route_after_evidence_reextract(state) == "answer"
+
+
+def test_graph_can_route_failed_reextract_with_sources_to_partial_answer(monkeypatch):
+    async def fake_requirements(state, model, tools, profile):
+        return {
+            "requirements_result": {"completion_criteria": ["Return all requested items."]},
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_plan(state, model, tools, profile):
+        return {"plan": ["example_tool: request"], "iteration": state["iteration"] + 1}
+
+    async def fake_execute(state, model, tools, profile, mcp_session=None):
+        return {
+            "plan": [],
+            "completed_steps": [{"step": "example_tool: request", "result": "supported", "tools_used": []}],
+            "candidate_sources": [{"title": "S", "url": "https://example.com/s", "content": "Supported."}],
+            "sources": [{"title": "S", "url": "https://example.com/s", "content": "Supported."}],
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_ledger(state, model, tools, profile):
+        return {
+            "evidence_audit": {"passed": False, "dedup_stalled": True},
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_reextract(state, model, tools, profile):
+        return {
+            "evidence_audit": {"passed": False, "gaps": ["One requested item is missing."]},
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_answer(state, model, tools, profile):
+        return {
+            "draft_result": {"answer": "Partial supported answer.", "salvaged_prose": True},
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_verify(state, model, tools, profile):
+        return {
+            "final_answer": "Partial supported answer.",
+            "verification_result": {"task_complete": False, "gaps": ["One requested item is missing."]},
+            "iteration": state["iteration"] + 1,
+        }
+
+    async def fake_assimilate(state, model, tools):
+        return {"iteration": state["iteration"] + 1}
+
+    monkeypatch.setattr(nodes_module, "requirements_node", fake_requirements)
+    monkeypatch.setattr(nodes_module, "plan_node", fake_plan)
+    monkeypatch.setattr(nodes_module, "execute_node", fake_execute)
+    monkeypatch.setattr(nodes_module, "evidence_ledger_node", fake_ledger)
+    monkeypatch.setattr(nodes_module, "evidence_reextract_node", fake_reextract)
+    monkeypatch.setattr(nodes_module, "answer_node", fake_answer)
+    monkeypatch.setattr(nodes_module, "verify_node", fake_verify)
+    monkeypatch.setattr(nodes_module, "assimilate_node", fake_assimilate)
+
+    graph = nodes_module.build_graph("fake-model", tools=[])
+    state = {
+        "task": "Return every requested item",
+        "conversation_context": "",
+        "requirements_result": {},
+        "plan": [],
+        "completed_steps": [],
+        "scratchpad": "",
+        "candidate_sources": [],
+        "admissible_sources": [],
+        "sources": [],
+        "evidence_ledger_result": {},
+        "evidence_challenge_result": {},
+        "draft_result": {},
+        "verification_result": {},
+        "evidence_audit": {},
+        "final_answer": "",
+        "iteration": 0,
+        "replan_count": 0,
+        "evidence_round": 0,
+        "search_memory": agent_module._default_search_memory(),
+        "answer_mode": "strict",
+        "stagnant_rounds": 0,
+        "last_supported_claim_count": 0,
+    }
+
+    final = asyncio.run(graph.ainvoke(state))
+
+    assert final["final_answer"] == "Partial supported answer."
 
 
 def test_sources_from_tool_result_passes_through_listing_metadata():
@@ -1041,10 +1354,99 @@ def test_execute_node_auto_enqueues_drilldown_steps_for_listing_page(monkeypatch
         "iteration": 0,
     }
 
-    update = asyncio.run(execute_node(state, "main", [], FOOTNOTE_PROFILE, fast_model="fast"))
+    update = asyncio.run(execute_node(state, "main", [], FOOTNOTE_PROFILE))
 
     assert update["plan"] == [
         "web_read: https://example.com/a1",
         "web_read: https://example.com/a2",
         "web_read: https://example.com/a3",
     ]
+
+
+def test_invented_urls_are_dropped_and_discovered_ones_kept():
+    from llmflow_search.nodes import _drop_undiscovered_url_steps
+
+    known = {"https://www.lamoncloa.gob.es/real-page"}
+    kept, invented = _drop_undiscovered_url_steps(
+        [
+            "web_read: https://www.lamoncloa.gob.es/real-page",
+            "web_read: https://es.wikipedia.org/wiki/Estrategia_Nacional_de_Inteligencia_Artificial",
+            "web_search: España ENIA estrategia",
+        ],
+        known,
+    )
+    assert kept == [
+        "web_read: https://www.lamoncloa.gob.es/real-page",
+        "web_search: España ENIA estrategia",
+    ]
+    assert invented == [
+        "web_read: https://es.wikipedia.org/wiki/Estrategia_Nacional_de_Inteligencia_Artificial"
+    ]
+
+
+def test_search_results_are_recorded_as_discovered_not_read():
+    import json as _json
+
+    from llmflow_search.search_memory import _merge_search_memory, _update_search_memory
+
+    memory = _merge_search_memory(None)
+    payload = _json.dumps({
+        "sources": [
+            {"url": "https://example.gov/a", "title": "Programa nacional"},
+            {"url": "https://example.gov/b", "title": "Segundo"},
+        ],
+        "count": 2,
+    })
+    memory = _update_search_memory(memory, "web_search", {"query": "q"}, payload)
+
+    assert memory["discovered_urls"] == ["https://example.gov/a", "https://example.gov/b"]
+    assert memory["discovered_titles"]["https://example.gov/a"] == "Programa nacional"
+    # Finding a URL is not reading it: read_urls must stay empty until a fetch runs.
+    assert memory["read_urls"] == []
+
+
+def test_web_search_results_are_recorded_under_their_real_key():
+    import json as _json
+
+    from llmflow_search.search_memory import _merge_search_memory, _update_search_memory
+
+    memory = _merge_search_memory(None)
+    # footnote's web_search returns "results", not "sources".
+    payload = _json.dumps({
+        "query": "q",
+        "count": 2,
+        "results": [
+            {"url": "https://coinstats.app/a", "title": "Bitcoin price"},
+            {"url": "https://example.gov/b", "title": "Second"},
+        ],
+    })
+    memory = _update_search_memory(memory, "web_search", {"query": "q"}, payload)
+
+    assert memory["discovered_urls"] == ["https://coinstats.app/a", "https://example.gov/b"]
+    assert memory["discovered_titles"]["https://coinstats.app/a"] == "Bitcoin price"
+
+
+def test_nothing_discovered_yet_means_nothing_is_filtered():
+    from llmflow_search.nodes import _drop_undiscovered_url_steps
+
+    steps = ["web_read: https://example.gov/a", "web_search: q"]
+    kept, invented = _drop_undiscovered_url_steps(steps, set())
+    assert kept == steps
+    assert invented == []
+
+
+def test_links_found_on_a_fetched_page_count_as_discovered():
+    import json as _json
+
+    from llmflow_search.search_memory import _merge_search_memory, _update_search_memory
+
+    memory = _merge_search_memory(None)
+    payload = _json.dumps({
+        "url": "https://example.gov/index",
+        "text": "content",
+        "links": [{"url": "https://example.gov/report.pdf", "text": "Report"}],
+    })
+    memory = _update_search_memory(memory, "web_read", {"url": "https://example.gov/index"}, payload)
+
+    assert "https://example.gov/report.pdf" in memory["discovered_urls"]
+    assert memory["read_urls"] == ["https://example.gov/index"]

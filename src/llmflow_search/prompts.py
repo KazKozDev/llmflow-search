@@ -22,7 +22,9 @@ Important:
 - Do not convert unstated ideals like exhaustive coverage, every category, regional balance, or comprehensive archives into requirements.
 - Examples, likely categories, and useful diversity are quality preferences only unless the user explicitly makes them mandatory.
 - Relative freshness terms should be grounded to Today, but do not require exact-day publication or full-period coverage unless the user explicitly asked for that.
-- Set answer_mode to "roundup" only for broad, open-ended discovery requests with no single named fact, entity, exact figure, or date to verify (e.g. news roundups, "what's happening in X", "latest updates on Y"). Set answer_mode to "strict" for everything else — financial/factual/single-entity requests, or anything with a concrete value to verify. Default to "strict" when unsure.
+- Set answer_mode to "roundup" for broad, open-ended discovery requests with no single named fact, entity, exact figure, or date to verify (e.g. news roundups, "what's happening in X", "latest updates on Y").
+- Also set answer_mode to "roundup" for superlative and recommendation requests — "best", "top", "fastest", "most popular", "which should I use", "лучший". These look like single facts but no source can prove one: the answer depends on the criteria, and different sources rank differently. Their completion criteria must ask for the leading candidates with the criteria behind each ranking, never for one winner. Requiring a single named winner makes the agent search indefinitely for a fact that does not exist.
+- Set answer_mode to "strict" for everything else — financial/factual/single-entity requests, or anything with a concrete value to verify. Default to "strict" when unsure.
 
 Return JSON only:
 {{
@@ -50,33 +52,38 @@ PLAN_PROMPT = f"""Today is {TODAY}. You are a research planner. Given a task, br
 If the task includes "Previous conversation" context, use it only to understand follow-up questions.
 Do not treat previous answers as evidence; search/read current sources again for the new answer.
 
-Tool roles:
-- web_search(query, lang, num): discovery only. It returns URLs and snippets. Search snippets are NOT valid evidence for the final answer.
-- web_read(url, lang, use_cache): evidence collection with persistent source cache. Use it after web_search to fetch page text.
-- web_extract_tables(url, lang, max_tables, max_rows): structured HTML table extraction with columns, rows, and URL provenance.
-- web_detect_downloads(url, lang, max_links): find CSV, TSV, XLS, XLSX, PDF, JSON, and XML files linked from a page.
-- web_parse_file(url, lang, max_rows): download and parse CSV, TSV, XLS, XLSX, PDF, or JSON files into structured rows/text with provenance.
-- web_fetch_json(url, lang, use_cache, timeout): fetch direct API/JSON endpoints and return parsed JSON with provenance.
-- web_deep_search(query, lang): search + fetch + extract + rerank. Use only for web search queries, NOT for analyzing already-fetched content.
-- generate_search_queries(task, requirements, max_queries): produce operator-style search queries for difficult data-source discovery.
-- classify_source(url, status_code, content_type, text_sample): classify source type and prefer official or primary data sources.
-- check_date_completeness(start_date, end_date, actual_items, granularity, calendar, holidays): deterministic coverage validator for required date ranges, including business-day calendars.
-- resolve_units(text): normalize currency pairs, currencies, and units before mixing rows from multiple sources.
-- validate_unit_rows(rows, expected_unit_or_pair, text_fields): reject structured rows with incompatible units, entities, or currency pairs.
-- evidence_entailment(claim, source_excerpt, backend, model): strict support check for a claim against one source excerpt. Use backend="auto" unless a specific judge backend is required.
-- tool_spec_propose(task, source_url, observed_failure, desired_output): propose a controlled task-specific extraction recipe when generic tools found a source but failed to return structured rows.
-- tool_code_generate(spec): create a small starter recipe function. Generated code must be validated before running.
-- tool_code_validate(code): statically validate recipe code against a strict allowlist.
-- tool_code_run_sandboxed(code, source_text, input_payload, timeout): run validated recipe code in a limited subprocess. The code must define extract(source_text, input_payload).
-- tool_promote(name, spec, code, sample_source_text, input_payload, expected_min_rows): save a validated successful recipe as reusable memory. This does not edit the MCP server.
-- source_cache_get(url) and source_cache_put(url, payload): persistent source cache for repeated URLs across retries.
-- Browser tools are for interactive pages only; use browser_set_date_range and browser_extract_tables_for_date_range when fetch/table/file tools cannot access date-filtered data.
+The LIVE MCP TOOL CATALOG included with the task is the authoritative list of what you can
+call, with exact names and parameters. It routinely contains tools not named in these rules —
+when one of them fits the task better than a general-purpose tool, plan it.
+
+Tool families in that catalog, and what each is for:
+- Discovery: general web search, plus indexes dedicated to a subject (scholarly publications,
+  code repositories and issues, reference/encyclopedia entries, recency-filtered results).
+  Discovery returns URLs and snippets. Snippets are NOT valid evidence for the final answer.
+- Query construction: operator-style query generation for hard-to-find structured data sources.
+- Page evidence: fetching a URL's text, with a persistent source cache across retries.
+- Structured extraction: HTML table extraction with columns, rows, and URL provenance.
+- Files: detecting CSV/TSV/XLS/XLSX/PDF/JSON/XML links on a page, then parsing one into rows.
+- APIs: fetching a direct JSON endpoint and returning parsed JSON with provenance.
+- Archives: locating an archived capture of a dead, moved, or rewritten URL and reading it.
+- Interactive browser: navigating, setting filters such as a date range, and extracting the
+  tables a page only renders after interaction. Use it when fetch/table/file tools cannot reach
+  the data, not before.
+- Verification and normalization: unit/currency resolution, structured-row unit validation,
+  date-range completeness checks, source classification, claim-vs-excerpt entailment, and
+  cross-source corroboration.
+- Recipe fallback: propose, generate, validate, run, and promote a small task-specific
+  extraction recipe when generic tools found a source but could not return rows from it.
 
 Rules:
 - Each step must be ONE tool call
-- Each step is one tool call expressed as an object {{"tool": <tool name>, "arg": <single argument>}}. For url tools the arg is the URL; for search tools the arg is the query; for tools taking structured input the arg is a JSON object string.
+- Each step is one tool call expressed as an object {{"tool": <tool name>, "arg": <single argument>}}. For url tools the arg is the URL; for search tools the arg is the plain query text with no quotes and no parameter names; for tools taking structured input the arg is a JSON object string.
+- Never write the arg as named parameters like query='...' lang='en'. Either it is the single value on its own, or it is a complete JSON object.
 - generate_search_queries is ONLY for structured data/API/CSV/historical dataset discovery. Do NOT use it for news, current events, or general information queries.
 - For news or general queries, use web_search directly with ONE short query per step.
+- When the subject has a dedicated index in the catalog — scientific papers, code repositories
+  or issues, encyclopedia/reference entities, or a strictly recent time window — plan that
+  index instead of, or alongside, a general web_search. It reaches sources a general query misses.
 - web_search queries must NOT be wrapped in double quotes. Use plain keywords only.
 - Each web_search step must contain ONE query only — never a comma-separated list of queries.
 - If the task already gives explicit URLs to read, add a web_read step for each of those exact URLs directly — do NOT search for them. Searching for a page you were already handed wastes steps and pulls in unrelated third-party sources.
@@ -89,7 +96,7 @@ Rules:
 - Never ask recipe code to access files, environment variables, subprocesses, or the network. Fetch sources with MCP tools first, then pass source_text/input_payload to the recipe runner.
 - For date-range tasks, add check_date_completeness after structured rows are collected. Use calendar="business_day" only when the source or task requires business/trading days.
 - For unit, currency, exchange-rate, or measurement tasks, add resolve_units before comparing or merging source rows, then validate_unit_rows when structured rows are available.
-- A plan that includes web_search but no evidence-fetching step is invalid. Evidence-fetching steps include web_read, web_deep_search, web_extract_tables, web_parse_file, web_fetch_json, tool_code_run_sandboxed, browser_extract_tables, or browser_extract_tables_for_date_range.
+- A plan that includes a discovery step but no evidence-fetching step is invalid. An evidence-fetching step fetches one identified source and returns its text, rows, JSON, or tables — reading a page, extracting its tables, parsing a linked file, fetching an endpoint, reading an archived capture, crawling a section, running a validated recipe, or extracting tables through the browser. Discovery steps, including subject-specific indexes, do not count.
 - Never finish research with search results only.
 - When the task needs the exact textual structure of a file (headings, formatting, raw markdown, source code), prefer fetching the file's raw/plain form over a rendered web page. Rendered pages flatten headings and lose markup, so verbatim heading or structure extraction fails.
 - If this is an additional evidence round, use a different query strategy and fresh sources.
@@ -317,7 +324,11 @@ Rules:
 7. If previous results were too specific or empty, broaden or change source/tool direction.
 8. Include domain/operator style queries only when they are likely to help.
 9. Return only queries that express the changed approach.
-10. Return an empty next_queries list when no fresh search direction remains.
+10. A next_queries entry is a plain query for general web search. To change the access path
+    instead of the wording, write the entry as "tool_name: argument" using a discovery tool
+    from the available catalog — a scholarly, code, reference, recency-filtered, or archive
+    index — and that tool will be called instead.
+11. Return an empty next_queries list when no fresh search direction remains.
 
 Return JSON only:
 {{
@@ -334,39 +345,51 @@ POST_BATCH_PROMPT = (
     "You are a research agent. After executing a batch of steps, decide what to do next.\n"
     "Return JSON only: "
     '{"decision": "DONE"|"CONTINUE"|"NEXT", '
-    '"next_steps": ["step1", ...], '
+    '"next_steps": ["tool: argument", ...], '
     '"reason": "one line"}\n'
     "- DONE: explicit task requirements are sufficiently covered by fetched sources\n"
     "- CONTINUE: execute remaining planned steps as-is\n"
-    "- NEXT: after web_search, use NEXT to add web_read steps for the most relevant URLs; "
-    "also use NEXT if remaining steps are wrong — provide better next_steps\n"
-    "After a web_search batch with no remaining plan: use NEXT with web_read steps for the best URLs.\n"
+    "- NEXT: the remaining steps are wrong, insufficient, or empty — provide better next_steps\n"
+    "\n"
+    "Every next_step is ONE tool call written as \"tool: argument\", using a tool name from the\n"
+    "AVAILABLE TOOLS catalog in the input. The argument is either the single required value\n"
+    "(a URL or a plain query, with no quotes and no parameter names) or a complete JSON object\n"
+    "when several parameters are needed — for example web_search: madrid august 2026, or\n"
+    'web_search: {"query": "madrid august 2026", "num": 10}.\n'
+    "Choose the tool that fits what the last batch actually revealed:\n"
+    "- search results and nothing fetched yet → read the most relevant discovered URLs\n"
+    "- a page whose numbers sit in an HTML table → extract that page's tables\n"
+    "- a page linking to CSV/XLSX/PDF/JSON files → detect the downloads, then parse the file\n"
+    "- a known API or .json endpoint → fetch the JSON directly\n"
+    "- a dead, moved, or changed URL → try its archived capture\n"
+    "- a subject with a dedicated index (papers, code repositories, reference entries, or\n"
+    "  strictly recent items) → use that index instead of another general query\n"
+    "- a page that renders its data only after interaction → drive the browser tools\n"
+    "A step that fetches a URL must name a URL that some tool actually returned; invented\n"
+    "addresses are discarded.\n"
     "Do not emit NEXT for repeated or trivially reworded steps.\n"
     "Prefer answering once explicit requirements are sufficiently supported; do not expand the task."
 )
 
 
 # ── generic profile (any MCP server) ─────────────────────────────────────
-# Tool-agnostic variants used when the connected server is not footnote-mcp. They speak in
-# terms of "the available tools" (the LLM gets the tool schemas via native function-calling)
-# rather than naming specific tools, and plan steps are free-form natural language.
+# Tool-agnostic variants used when the connected server is not footnote-mcp. The planner gets
+# a compact catalog derived from the live MCP schemas and emits exact tool names/arguments.
 
-GENERIC_PLAN_PROMPT = f"""Today is {TODAY}. You are a research planner driving a set of tools
-exposed by an MCP server. You are given the tool schemas separately; plan how to satisfy the
-task by calling them.
-
-Break the task into concrete steps. Each step is ONE natural-language instruction describing
-a single tool call to make (e.g. "look up the current status of X", "read the contents of Y").
-Do NOT invent tool names or arguments here — the executor sees the tool schemas and picks the
-right tool for each step.
+GENERIC_PLAN_PROMPT = f"""Today is {TODAY}. You are a research planner driving tools exposed
+by an arbitrary MCP server. A LIVE MCP TOOL CATALOG generated from list_tools is included with
+the task. Plan with the exact tool names and input parameters from that catalog.
 
 Rules:
 - One tool action per step.
+- Use only exact tool names from the live catalog; never invent a tool.
+- For one required parameter, put its value in arg. For multiple required parameters, encode
+  the complete JSON object as the arg string.
 - Order steps so later steps can use what earlier steps return.
 - Prefer gathering concrete information before concluding; do not plan to answer from prior
   knowledge.
-- Output ONLY a JSON object of the form {{"steps": [{{"tool": "step", "arg": "<instruction>"}}, ...]}}.
-  Put the whole instruction in "arg"; "tool" may be the literal word "step". No explanations."""
+- Output ONLY a JSON object of the form {{"steps": [{{"tool": "exact_tool_name", "arg": "<value or JSON object string>"}}, ...]}}.
+  No explanations."""
 
 
 GENERIC_EVAL_PROMPT = """You are an evaluator. Given the task, completed steps, and collected

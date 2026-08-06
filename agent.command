@@ -47,6 +47,14 @@ uv sync --locked --quiet
 uv pip install --quiet --python .venv/bin/python -e ../footnote-mcp "mcp<2"
 uv run --no-sync python -m playwright install chromium >/dev/null 2>&1 || true
 
+# Local secrets (API keys) live in .env, which is gitignored. Keeping them here
+# rather than in the shell profile keeps them out of shell history too.
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+
 export LLMFLOW_SEARCH_FORCE_COLOR="${LLMFLOW_SEARCH_FORCE_COLOR:-1}"
 uv run --no-sync python -m llmflow_search
 

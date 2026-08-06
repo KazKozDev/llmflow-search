@@ -47,7 +47,23 @@ def _split_deep_search_context(context: str, source_lookup: dict[int, dict]) -> 
     return sources
 
 
-def _sources_from_tool_result(tool_name: str, tool_result: str) -> list[dict]:
+# Normalized search records (papers, encyclopedia entries, repositories, archived
+# captures) all share the {title, url, snippet/text, published, authors} shape the
+# server returns, so one branch covers every one of them.
+_SEARCH_RECORD_KINDS = {
+    "papers_search": "paper",
+    "encyclopedia_search": "encyclopedia",
+    "github_search": "repository",
+    "archive_search": "archive",
+}
+
+# A record earns a source slot only when its own payload carries substantive text —
+# a paper abstract, a repository description, an archived snapshot body. Anything
+# shorter is a discovery pointer, and pointers are not evidence.
+_MIN_RECORD_CONTENT_CHARS = 80
+
+
+def _sources_from_tool_result(tool_name: str, tool_result: str, context: dict | None = None) -> list[dict]:
     payload = _json_loads_best_effort(tool_result, {})
     if not isinstance(payload, dict):
         return []
@@ -165,12 +181,17 @@ def _sources_from_tool_result(tool_name: str, tool_result: str) -> list[dict]:
             }
         ]
 
-    if tool_name == "browser_extract_tables":
+    if tool_name in ("browser_extract_tables", "browser_extract_tables_for_date_range"):
         url = payload.get("url", "")
         tables = payload.get("tables") if isinstance(payload.get("tables"), list) else []
         if not url or not tables:
             return []
-        content = _clip_text(json.dumps({"tables": tables}, ensure_ascii=False, indent=2), 12000)
+        # The date-range variant returns the same table payload plus the range it applied.
+        # Keeping the range in the content is what makes the rows verifiable.
+        table_payload: dict = {"tables": tables}
+        if payload.get("date_range"):
+            table_payload = {"date_range": payload["date_range"], **table_payload}
+        content = _clip_text(json.dumps(table_payload, ensure_ascii=False, indent=2), 12000)
         return [
             {
                 "title": payload.get("title") or f"Browser tables from {url}",
@@ -181,10 +202,102 @@ def _sources_from_tool_result(tool_name: str, tool_result: str) -> list[dict]:
             }
         ]
 
+    if tool_name in _SEARCH_RECORD_KINDS:
+        kind = _SEARCH_RECORD_KINDS[tool_name]
+        records = []
+        for item in payload.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url") or ""
+            body = str(item.get("text") or "")
+            content = _clip_text(body or str(item.get("snippet") or ""))
+            if not url or len(content) < _MIN_RECORD_CONTENT_CHARS:
+                continue
+            record_source = item.get("source") or tool_name
+            if not body:
+                # An abstract or repository description is what the index holds, not the
+                # document itself. Saying so keeps the ledger from over-reading it.
+                content = f"[{record_source} index record — abstract/description, not full text]\n{content}"
+            authors = [str(author) for author in (item.get("authors") or []) if author]
+            record = {
+                "title": item.get("title") or url,
+                "url": url,
+                "published": item.get("published"),
+                "content": content,
+                "kind": kind,
+                "record_source": record_source,
+            }
+            if authors:
+                record["authors"] = authors
+            if item.get("identifiers"):
+                record["identifiers"] = item["identifiers"]
+            records.append(record)
+        return records
+
+    if tool_name == "web_archive_fetch":
+        text = _clip_text(payload.get("text", ""))
+        snapshot_url = payload.get("snapshot_url") or ""
+        if payload.get("error") or payload.get("fetch_error") or not text or not snapshot_url:
+            return []
+        original_url = payload.get("url") or snapshot_url
+        return [
+            {
+                "title": payload.get("title") or f"Archived snapshot of {original_url}",
+                "url": snapshot_url,
+                "published": payload.get("published"),
+                "content": text,
+                "kind": "archive",
+                "original_url": original_url,
+            }
+        ]
+
+    if tool_name == "web_crawl":
+        crawled = []
+        for page in payload.get("pages") or []:
+            if not isinstance(page, dict) or page.get("error"):
+                continue
+            url = page.get("url") or ""
+            text = _clip_text(page.get("text", ""))
+            if not url or not text:
+                continue
+            crawled.append(
+                {
+                    "title": page.get("title") or url,
+                    "url": url,
+                    "published": page.get("published"),
+                    "content": text,
+                    "kind": "page",
+                }
+            )
+        return crawled
+
+    if tool_name == "web_extract":
+        # The browser session holds the address, not the tool result, so provenance
+        # comes from the caller's context. Without it the text cannot be cited.
+        url = _normalize_source_url(str((context or {}).get("browser_url") or ""))
+        text = _clip_text(payload.get("text") or "")
+        if not text and isinstance(payload.get("elements"), dict):
+            text = _clip_text(
+                "\n".join(f"{ref}: {value}" for ref, value in payload["elements"].items() if value)
+            )
+        if not url or not text:
+            return []
+        return [
+            {
+                "title": f"Browser page text from {url}",
+                "url": url,
+                "published": None,
+                "content": text,
+                "kind": "page",
+            }
+        ]
+
     return []
 
 
-def generic_sources_from_tool_result(tool_name: str, tool_result: str) -> list[dict]:
+def generic_sources_from_tool_result(
+    tool_name: str, tool_result: str, context: dict | None = None
+) -> list[dict]:
     """Best-effort source for an arbitrary (non-footnote) MCP tool.
 
     We know nothing about the tool's schema, so we treat its textual output as one
@@ -192,6 +305,7 @@ def generic_sources_from_tool_result(tool_name: str, tool_result: str) -> list[d
     non-empty key that `_merge_sources` dedups on — identical outputs collapse, distinct
     ones are kept — so tool results count as grounded sources in generic mode.
     """
+    del context  # no footnote-specific provenance to resolve for an unknown tool
     text = _clip_text(tool_result or "")
     if not text.strip():
         return []
@@ -219,13 +333,32 @@ def _merge_sources(existing: list[dict], new_sources: list[dict]) -> list[dict]:
     return merged
 
 
+_SOURCE_BLOCK_OVERHEAD_CHARS = 200  # the [n]/Title/URL/Published/Source type header
+MIN_SOURCE_EXCERPT_CHARS = 2000  # below this an excerpt is too thin to judge a claim on
+
+
+def _source_excerpt_budget(count: int) -> int:
+    """Per-source excerpt length that lets ``count`` sources share the total budget.
+
+    A fixed per-source cap meant the total budget ran out partway down the list and
+    the rest of the fetched pages were dropped before the model ever saw them — 25
+    pages read, 9 shown. Dividing the budget keeps every fetched page visible; the
+    excerpt shrinks instead of the source list.
+    """
+    if count <= 0:
+        return SOURCE_CONTENT_MAX_CHARS
+    share = TOTAL_SOURCES_MAX_CHARS // count - _SOURCE_BLOCK_OVERHEAD_CHARS
+    return max(MIN_SOURCE_EXCERPT_CHARS, min(SOURCE_CONTENT_MAX_CHARS, share))
+
+
 def _format_sources_for_llm(sources: list[dict]) -> tuple[str, set[int]]:
     parts = []
     valid_ids = set()
     total_chars = 0
+    budget = _source_excerpt_budget(len(sources or []))
 
     for src_id, source in enumerate(sources or [], 1):
-        content = _clip_text(source.get("content", ""))
+        content = _clip_text(source.get("content", ""), budget)
         if not content:
             continue
         block = (

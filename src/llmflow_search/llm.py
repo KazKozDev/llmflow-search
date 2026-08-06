@@ -18,7 +18,7 @@ def pop_pending_initial_task() -> str:
     return task
 
 
-def pick_model() -> tuple[str, str]:
+def pick_model() -> str:
     try:
         models = ollama.list()
     except Exception as e:
@@ -36,14 +36,6 @@ def pick_model() -> tuple[str, str]:
     available = [m.model or "" for m in models.models]
 
     DEFAULT_MAIN = "gemma4:26b-mlx"
-    FAST_MODEL_HINTS = ("qwen2.5:7b", "qwen2.5:3b", "gemma3:4b", "llama3.2:3b")
-
-    def _default_fast_model() -> str:
-        for preferred in FAST_MODEL_HINTS:
-            if preferred in available:
-                return preferred
-        smallest = min(models.models, key=lambda m: m.size or 0)
-        return smallest.model or available[0]
 
     def _pick(prompt: str, default: str) -> str:
         global _PENDING_INITIAL_TASK
@@ -65,10 +57,8 @@ def pick_model() -> tuple[str, str]:
             print(f"  Enter 1–{len(available)}")
 
     main_model = _pick("Pick model number", DEFAULT_MAIN)
-    fast_model = _default_fast_model() if _PENDING_INITIAL_TASK else _pick("Pick fast model number", _default_fast_model())
     print(f"\nUsing: {main_model}")
-    print(f"Fast model: {fast_model}")
-    return main_model, fast_model
+    return main_model
 
 
 _AVAILABLE_MODELS_CACHE: list[str] | None = None

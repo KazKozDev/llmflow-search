@@ -14,12 +14,12 @@ def test_model_picker_preserves_non_numeric_input_as_first_task(monkeypatch):
     monkeypatch.setattr(llm.ollama, "list", lambda: models)
     monkeypatch.setattr("builtins.input", lambda _prompt: "first user request")
 
-    assert llm.pick_model() == ("gemma4:26b-mlx", "qwen2.5:7b")
+    assert llm.pick_model() == "gemma4:26b-mlx"
     assert llm.pop_pending_initial_task() == "first user request"
     assert llm.pop_pending_initial_task() == ""
 
 
-def test_model_picker_selects_main_and_fast_models(monkeypatch):
+def test_model_picker_asks_once_and_returns_one_model(monkeypatch):
     models = SimpleNamespace(
         models=[
             SimpleNamespace(model="gemma4:26b-mlx", size=8 * 1024**3),
@@ -27,15 +27,21 @@ def test_model_picker_selects_main_and_fast_models(monkeypatch):
             SimpleNamespace(model="tiny-model", size=1024**3),
         ]
     )
-    answers = iter(["2", "3"])
+    prompts = []
     monkeypatch.setattr(llm.ollama, "list", lambda: models)
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
-    assert llm.pick_model() == ("other-model", "tiny-model")
+    def _input(prompt):
+        prompts.append(prompt)
+        return "2"
+
+    monkeypatch.setattr("builtins.input", _input)
+
+    assert llm.pick_model() == "other-model"
+    assert len(prompts) == 1
     assert llm.pop_pending_initial_task() == ""
 
 
-def test_model_picker_fast_enter_uses_small_default(monkeypatch):
+def test_model_picker_enter_uses_default(monkeypatch):
     models = SimpleNamespace(
         models=[
             SimpleNamespace(model="gemma4:26b-mlx", size=8 * 1024**3),
@@ -43,11 +49,10 @@ def test_model_picker_fast_enter_uses_small_default(monkeypatch):
             SimpleNamespace(model="tiny-model", size=1024**3),
         ]
     )
-    answers = iter(["1", ""])
     monkeypatch.setattr(llm.ollama, "list", lambda: models)
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
-    assert llm.pick_model() == ("gemma4:26b-mlx", "qwen2.5:7b")
+    assert llm.pick_model() == "gemma4:26b-mlx"
     assert llm.pop_pending_initial_task() == ""
 
 

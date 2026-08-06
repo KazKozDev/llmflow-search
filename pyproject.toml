@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llmflow-search"
-version = "0.1.0"
+version = "0.2.0"
 description = "A LangGraph research agent that drives the footnote-mcp server to produce source-grounded, verified answers."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 keywords = ["llm-agent", "langgraph", "mcp", "web-research", "fact-checking", "ollama"]
 
 dependencies = [
+    "jsonschema>=4.20,<5",
     "langgraph>=0.2",
     "markdown>=3.10",
     "mcp>=1.26,<2",

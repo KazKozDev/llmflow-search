@@ -10,11 +10,17 @@ from . import llm, mcp_client
 from . import memory as _memmod
 from .config import (
     INSUFFICIENT_EVIDENCE_MESSAGE,
+    DISCOVERED_URL_CATALOG_TOP_K,
     LISTING_DRILLDOWN_TOP_K,
     MAX_EVIDENCE_ROUNDS,
+    MAX_PARALLEL_FETCHES,
     MAX_PLAN_STEPS,
+    MAX_SEARCH_CALLS_PER_QUESTION,
     MAX_STAGNANT_ROUNDS,
+    MAX_THROTTLED_STEPS_PER_BATCH,
+    ROUNDUP_MIN_CLAIMS,
     ROUNDUP_MIN_SOURCES,
+    SEARCH_GROUP_DELAY_SECONDS,
 )
 from .console import print
 from .llm import _json_loads_best_effort, _ollama_chat_json
@@ -28,8 +34,15 @@ from .search_memory import (
     _strategy_plan_from_memory,
     _update_search_memory,
 )
-from .sources import _audit_evidence_state, _effective_question, _format_sources_for_llm, _merge_sources
+from .sources import (
+    _audit_evidence_state,
+    _effective_question,
+    _format_sources_for_llm,
+    _merge_sources,
+    _normalize_source_url,
+)
 from .state import AgentState
+from .tool_steps import _step_identity, _tool_call_from_schema_step
 
 
 def _default_requirements(question: str) -> dict:
@@ -325,7 +338,15 @@ def _normalize_evidence_ledger_result(
     # concern must not be able to block readiness just because the model believed it.
     indexed_rows = [item for item in ledger if item["requirement_index"] is not None]
     if answer_mode == "roundup":
-        answer_ready = len(supported_source_ids) >= ROUNDUP_MIN_SOURCES
+        enough_roundup_evidence = (
+            len(supported_source_ids) >= ROUNDUP_MIN_SOURCES
+            or supported_claims >= ROUNDUP_MIN_CLAIMS
+        )
+        # A roundup claim can satisfy several broad requirements at once even though
+        # the ledger schema stores only one requirement_index per row. Requiring an
+        # indexed row for every criterion therefore creates false negatives. The
+        # model's indexed global_missing list remains the deterministic blocker.
+        answer_ready = bool(ledger) and not global_missing and enough_roundup_evidence
     else:
         no_real_blockers = not global_missing and all(
             item["support_level"] == "supported" and item["can_use_in_answer"] for item in indexed_rows
@@ -423,7 +444,12 @@ def _steps_from_plan_objects(content: str) -> list[str]:
     for item in items:
         if isinstance(item, dict):
             tool = str(item.get("tool", "")).strip()
-            arg = str(item.get("arg", "")).strip()
+            raw_arg = item.get("arguments", item.get("arg", ""))
+            arg = (
+                json.dumps(raw_arg, ensure_ascii=False, separators=(",", ":"))
+                if isinstance(raw_arg, (dict, list))
+                else str(raw_arg).strip()
+            )
             if tool and arg:
                 steps.append(f"{tool}: {arg}")
         elif isinstance(item, str) and ":" in item:
@@ -431,7 +457,7 @@ def _steps_from_plan_objects(content: str) -> list[str]:
     return steps
 
 
-async def plan_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+async def plan_node(state: AgentState, model: str, tools: list[dict], profile: Profile) -> dict:
     """Break task into steps on first call, or use replanned steps."""
     task = state["task"]
     plan = state["plan"]
@@ -449,7 +475,8 @@ async def plan_node(state: AgentState, model: str, _tools: list[dict], profile: 
 
     if profile.uses_search_memory and evidence_round and search_memory.get("next_queries"):
         question = _effective_question(task)
-        steps = _strategy_plan_from_memory(question, search_memory)
+        live_names = {tool.get("function", {}).get("name") for tool in tools or []}
+        steps = _strategy_plan_from_memory(question, search_memory, live_names)
         print(f"\n  [PLAN] Using evolved search strategy (retry {evidence_round}/{MAX_EVIDENCE_ROUNDS})")
         print(f"  [PLAN] {len(steps)} steps:")
         for i, s in enumerate(steps, 1):
@@ -470,7 +497,11 @@ Additional evidence retry: {evidence_round} of {MAX_EVIDENCE_ROUNDS}.
 Search memory:
 {_format_search_memory_for_prompt(search_memory)}
 
-Create a new plan with fresh search terms only (web_search steps). Do NOT add web_read steps."""
+Create a new plan of discovery steps only — do NOT add steps that fetch a specific URL
+(web_read and the other url-argument tools), because no new URL is known yet.
+Change the access path, not only the wording: when plain web_search already failed, reach
+for the discovery tool in the catalog that matches the subject (scholarly, code, reference,
+recency-filtered, archived) instead of rephrasing the same query again."""
         print(f"\n  [PLAN] Searching for more evidence (retry {evidence_round}/{MAX_EVIDENCE_ROUNDS})")
     elif evidence_round:
         # generic: replan from scratch, nudged by the reflection on why the last try fell short
@@ -497,8 +528,17 @@ Create a fresh plan of steps to gather the needed information using the availabl
 Task requirements:
 {json.dumps(requirements, ensure_ascii=False, indent=2)}
 
-Create a plan (JSON array of step strings)."""
+Create a plan using the available MCP tools."""
         print(f"\n  [PLAN] Breaking down: {task[:80]}")
+
+    planning_input += f"""
+
+LIVE MCP TOOL CATALOG (generated from list_tools; * means required):
+{mcp_client._format_tool_catalog(tools)}
+
+Use only tool names from this catalog. For a tool with several required parameters,
+put a JSON object encoded as the step's arg string. For a tool with one required
+parameter, arg may be that single value."""
 
     response = llm._ollama_chat(
         model,
@@ -511,7 +551,8 @@ Create a plan (JSON array of step strings)."""
 
     steps = _steps_from_plan_objects(content)
     if not steps:
-        steps = [f"web_search: {task}"]
+        live_names = {tool.get("function", {}).get("name") for tool in tools}
+        steps = [profile.fallback_step(task)] if "web_search" in live_names else [task]
 
     print(f"  [PLAN] {len(steps)} steps:")
     for i, s in enumerate(steps, 1):
@@ -520,18 +561,64 @@ Create a plan (JSON array of step strings)."""
     return {"plan": steps, "iteration": iteration}
 
 
+_URL_STEP_PREFIXES = (
+    "web_read: ", "web_extract_tables: ", "web_detect_downloads: ",
+    "web_parse_file: ", "web_fetch_json: ", "classify_source: ",
+    "web_crawl: ",
+)
+# Archive lookups are deliberately absent: their whole purpose is reaching a URL that no
+# longer resolves, so checking them against what a live search returned would block the
+# one tool that can still recover the source.
+
+
+def _drop_undiscovered_url_steps(steps: list[str], known_urls: set[str]) -> tuple[list[str], list[str]]:
+    """Keep only fetch steps whose URL some search actually returned.
+
+    The model composes plausible government and Wikipedia addresses when it is
+    asked which page to read next; they resolve to 404 stubs and poison the
+    ledger with empty sources. A pointer must be chosen from what exists.
+    """
+    if not known_urls:
+        # Nothing has been discovered yet, so nothing can be checked. Blocking
+        # here would silence every fetch and starve the ledger instead of
+        # catching an invention.
+        return list(steps), []
+    kept: list[str] = []
+    invented: list[str] = []
+    for step in steps:
+        prefix = next((p for p in _URL_STEP_PREFIXES if step.startswith(p)), "")
+        if not prefix:
+            kept.append(step)
+            continue
+        url = _normalize_source_url(step[len(prefix):].strip())
+        if url and url in known_urls:
+            kept.append(step)
+        else:
+            invented.append(step)
+    return kept, invented
+
+
 async def _execute_single_step(
     step: str,
     model: str,
-    fast_model: str,
     tools: list[dict],
     mcp_session: ClientSession | None,
     question: str,
     requirements: dict,
     profile: Profile,
+    source_context: dict | None = None,
 ) -> tuple[str, str, list, dict]:
     """Execute one resolved step. Returns (step, result_text, sources, search_memory_updates)."""
-    deterministic_tool_call = profile.tool_call_from_step(step)
+    # Prefer the live schema registry. This supports every tool returned by list_tools,
+    # including tools added after this client was released. Profile-specific parsing is
+    # retained only for legacy/Python-like step syntax.
+    deterministic_tool_call = _tool_call_from_schema_step(step, tools)
+    if not deterministic_tool_call:
+        deterministic_tool_call = profile.tool_call_from_step(step)
+        if deterministic_tool_call and tools:
+            live_names = {tool.get("function", {}).get("name") for tool in tools}
+            if deterministic_tool_call.get("function", {}).get("name") not in live_names:
+                deterministic_tool_call = None
     if deterministic_tool_call:
         tool_calls = [deterministic_tool_call]
         response: dict = {}
@@ -568,12 +655,12 @@ async def _execute_single_step(
                 sm_updates = {"name": name, "args": args, "result": tool_result}
                 tool_payload = _json_loads_best_effort(tool_result, {})
                 observation = _diagnose_observation_with_model(
-                    fast_model or model, name, args,
+                    model, name, args,
                     tool_payload if isinstance(tool_payload, dict) else {},
                     question=question, requirements=requirements, current_step=step,
                 )
                 sm_updates["observation"] = observation
-                step_sources = profile.sources_from_tool_result(name, tool_result)
+                step_sources = profile.sources_from_tool_result(name, tool_result, source_context)
                 step_sources = _enrich_sources_with_observation(step_sources, observation)
                 print(f"→ {len(tool_result)} chars")
             except Exception as e:
@@ -583,7 +670,7 @@ async def _execute_single_step(
     return step, result_text, step_sources, sm_updates
 
 
-async def execute_node(state: AgentState, model: str, tools: list[dict], profile: Profile, mcp_session: ClientSession | None = None, fast_model: str = "") -> dict:
+async def execute_node(state: AgentState, model: str, tools: list[dict], profile: Profile, mcp_session: ClientSession | None = None) -> dict:
     """Execute a batch of same-tool plan steps in parallel."""
     plan = state["plan"]
     completed = list(state["completed_steps"])
@@ -615,19 +702,54 @@ async def execute_node(state: AgentState, model: str, tools: list[dict], profile
     # repeated searches waste rate-limit budget and repeated reads waste source slots.
     final_steps = list(dict.fromkeys(batch))
 
-    # Execute all steps in batch in parallel. Search calls stay sequential here;
-    # mcp_client applies the cross-batch delay immediately before each request.
-    is_search_batch = current_tool == "web_search"
-    concurrency = 1 if is_search_batch else len(final_steps)
-    print(f"\n  [EXEC] Batch ({len(final_steps)} steps, concurrency={concurrency}):")
+    # A rate-limited backend gets one request at a time, and only a few per round.
+    # Every tool drawing on a throttled family counts, not just web_search: one call
+    # already fans out to several engines inside the server, so a parallel batch of
+    # them is a burst of a dozen upstream requests and is what gets us cut off.
+    throttle_group = mcp_client._throttle_group(current_tool)
+    if throttle_group:
+        # Keyed providers bill per call. A question that keeps re-searching without
+        # finding anything must hit a wall instead of draining the month's quota.
+        spent = int(search_memory.get("search_calls", 0))
+        budget_left = max(0, MAX_SEARCH_CALLS_PER_QUESTION - spent)
+        if budget_left <= 0:
+            search_memory["search_exhausted"] = True
+            print(f"\n  [EXEC] Search budget spent ({spent}/{MAX_SEARCH_CALLS_PER_QUESTION}) — "
+                  f"answering from what was already fetched")
+            return {
+                "plan": [s for s in remaining if mcp_client._throttle_group(s.split(':', 1)[0].strip()) is None],
+                "search_memory": search_memory,
+                "iteration": iteration,
+            }
+        if len(final_steps) > budget_left:
+            final_steps = final_steps[:budget_left]
+            remaining = []
+        if len(final_steps) > MAX_THROTTLED_STEPS_PER_BATCH:
+            deferred = final_steps[MAX_THROTTLED_STEPS_PER_BATCH:]
+            final_steps = final_steps[:MAX_THROTTLED_STEPS_PER_BATCH]
+            remaining = deferred + remaining
+            print(f"\n  [EXEC] Deferring {len(deferred)} {current_tool} step(s) to the next round")
+        search_memory["search_calls"] = spent + len(final_steps)
+
+    concurrency = 1 if throttle_group else max(1, min(len(final_steps), MAX_PARALLEL_FETCHES))
+    pacing = ""
+    if throttle_group:
+        delay = SEARCH_GROUP_DELAY_SECONDS.get(throttle_group, 0.0)
+        pacing = f", {delay:g}s apart ({throttle_group})"
+    print(f"\n  [EXEC] Batch ({len(final_steps)} steps, concurrency={concurrency}{pacing}):")
     for s in final_steps:
         print(f"    • {s[:100]}")
 
     sem = asyncio.Semaphore(concurrency)
+    # Browser-session output (web_extract) carries no address of its own; the page the
+    # session is on was recorded when web_navigate ran in an earlier batch.
+    source_context = {"browser_url": search_memory.get("browser_url", "")}
 
     async def run_with_sem(_index: int, step: str):
         async with sem:
-            return await _execute_single_step(step, model, fast_model, tools, mcp_session, question, requirements, profile)
+            return await _execute_single_step(
+                step, model, tools, mcp_session, question, requirements, profile, source_context
+            )
 
     batch_results = await asyncio.gather(*[run_with_sem(i, s) for i, s in enumerate(final_steps)])
 
@@ -678,6 +800,15 @@ async def execute_node(state: AgentState, model: str, tools: list[dict], profile
         print(f"  [DRILLDOWN] listing page detected — queuing {len(drilldown_steps)} article link(s)")
     unhelpful_urls = search_memory.get("avoid_urls", [])[-15:]
     unhelpful_domains = search_memory.get("bad_domains", [])[-15:]
+    # The post-batch prompt only ever saw the tail of the scratchpad, so the model
+    # was asked to name URLs to read without being shown any. It answered with
+    # plausible addresses from its own memory, which 404.
+    discovered_titles = search_memory.get("discovered_titles", {})
+    unread_urls = [
+        url for url in search_memory.get("discovered_urls", [])
+        if url not in read_urls_set and url not in unhelpful_urls
+    ]
+    readable_catalog = unread_urls[-DISCOVERED_URL_CATALOG_TOP_K:]
     post_input = (
         f"Task: {question}\n\n"
         f"Completion criteria (ALL must be met before DONE):\n"
@@ -690,8 +821,19 @@ async def execute_node(state: AgentState, model: str, tools: list[dict], profile
         + ("\n\nURLs/domains that proved unhelpful this session (do NOT read these again):\n"
            + "\n".join(f"  - {u}" for u in unhelpful_urls + unhelpful_domains)
            if (unhelpful_urls or unhelpful_domains) else "")
+        + "\n\nURLs found by search and not yet read — a web_read step MUST name one of these,\n"
+          "and any other address will be discarded:\n"
+        + (
+            "\n".join(
+                f"  - {url}" + (f"  ({discovered_titles[url][:80]})" if discovered_titles.get(url) else "")
+                for url in readable_catalog
+            )
+            if readable_catalog else "  (none — search again instead of reading)"
+        )
         + f"\n\nFetched candidate sources (pages actually read): {len(candidate_sources)}\n"
         f"Remaining plan: {[s[:60] for s in remaining[:4]] if remaining else '(empty — no more steps planned)'}\n\n"
+        f"AVAILABLE TOOLS (* means required; a next_step must name one of these):\n"
+        f"{mcp_client._format_tool_catalog(tools)}\n\n"
         f"Recent findings:\n{scratchpad[-2500:]}"
     )
     post_content = _ollama_chat_json(model, [{"role": "user", "content": post_input}], system=profile.post_batch)
@@ -708,7 +850,19 @@ async def execute_node(state: AgentState, model: str, tools: list[dict], profile
     elif post_decision == "NEXT":
         next_steps = post.get("next_steps", [])
         if next_steps and isinstance(next_steps, list):
-            remaining = [str(s) for s in next_steps] + remaining
+            kept, invented = _drop_undiscovered_url_steps(
+                [str(s) for s in next_steps], set(unread_urls) | read_urls_set
+            )
+            if invented:
+                print(f"  [POST-BATCH] dropped {len(invented)} invented URL(s): {invented[0][:70]}")
+            # A NEXT that re-proposes a step already executed is not progress; without
+            # this the same three queries come back batch after batch until the
+            # iteration cap ends the run.
+            already_run = {_step_identity(str(c.get("step", "")), tools) for c in completed}
+            fresh = [s for s in kept if _step_identity(s, tools) not in already_run]
+            if len(fresh) != len(kept):
+                print(f"  [POST-BATCH] dropped {len(kept) - len(fresh)} repeated step(s)")
+            remaining = fresh + remaining
 
     if drilldown_steps:
         # A listing page was actually detected (real hyperlinks, not a guess) — queue its
@@ -739,8 +893,6 @@ async def evidence_ledger_node(state: AgentState, model: str, tools: list[dict],
     sources_text, valid_source_ids = _format_sources_for_llm(candidate_sources)
     completed = state.get("completed_steps", [])
     previous_ledger = state.get("evidence_ledger_result", {})
-    available_tools = [t.get("function", {}).get("name", "") for t in tools if isinstance(t, dict)]
-    available_tools = [name for name in available_tools if name]
     iteration = state["iteration"] + 1
 
     print(f"\n  [LEDGER] Reviewing proof from {len(valid_source_ids)} candidate sources (answer_mode={answer_mode})...")
@@ -780,7 +932,7 @@ NON_BLOCKING_QUALITY_PREFERENCES:
 {json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
 
 AVAILABLE_TOOLS:
-{json.dumps(available_tools, ensure_ascii=False)}
+{mcp_client._format_tool_catalog(tools)}
 
 COMPLETED_STEPS:
 {json.dumps([c.get("step", "") for c in completed[-12:]], ensure_ascii=False, indent=2)}
@@ -849,8 +1001,11 @@ Build the evidence ledger and choose next tool steps if proof is still missing."
     if ledger_result["answer_ready"]:
         update["plan"] = []
     elif next_steps:
-        already_done = {str(c.get("step", "")).strip() for c in completed}
-        fresh_steps = [step for step in next_steps if step not in already_done]
+        # Identity, not text: the ledger re-proposes the same search worded differently
+        # ("web_search: X" vs "web_search: query: 'X' num=10") and a string compare
+        # lets it through as if it were a fresh attempt.
+        already_done = {_step_identity(str(c.get("step", "")), tools) for c in completed}
+        fresh_steps = [step for step in next_steps if _step_identity(step, tools) not in already_done]
         if fresh_steps:
             update["plan"] = fresh_steps + list(state.get("plan", []))
         elif len(completed) < MAX_PLAN_STEPS and state.get("evidence_round", 0) < MAX_EVIDENCE_ROUNDS:
@@ -878,8 +1033,6 @@ async def evidence_challenge_node(state: AgentState, model: str, tools: list[dic
     sources_text, _valid_source_ids = _format_sources_for_llm(candidate_sources)
     completed = state.get("completed_steps", [])
     ledger_result = state.get("evidence_ledger_result", {})
-    available_tools = [t.get("function", {}).get("name", "") for t in tools if isinstance(t, dict)]
-    available_tools = [name for name in available_tools if name]
     iteration = state["iteration"] + 1
 
     print("  [CHALLENGE] Stress-testing evidence ledger...")
@@ -899,7 +1052,7 @@ NON_BLOCKING_QUALITY_PREFERENCES:
 {json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
 
 AVAILABLE_TOOLS:
-{json.dumps(available_tools, ensure_ascii=False)}
+{mcp_client._format_tool_catalog(tools)}
 
 COMPLETED_STEPS:
 {json.dumps([c.get("step", "") for c in completed[-12:]], ensure_ascii=False, indent=2)}
@@ -947,8 +1100,11 @@ Challenge the ledger and decide whether a final answer is permitted."""
     if challenge["answer_permitted"]:
         update["plan"] = []
     elif next_steps:
-        already_done = {str(c.get("step", "")).strip() for c in completed}
-        fresh_steps = [step for step in next_steps if step not in already_done]
+        # Identity, not text: the ledger re-proposes the same search worded differently
+        # ("web_search: X" vs "web_search: query: 'X' num=10") and a string compare
+        # lets it through as if it were a fresh attempt.
+        already_done = {_step_identity(str(c.get("step", "")), tools) for c in completed}
+        fresh_steps = [step for step in next_steps if _step_identity(step, tools) not in already_done]
         if fresh_steps:
             update["plan"] = fresh_steps + list(state.get("plan", []))
         elif len(completed) < MAX_PLAN_STEPS and state.get("evidence_round", 0) < MAX_EVIDENCE_ROUNDS:
@@ -1191,6 +1347,8 @@ def route_after_evidence_reextract(state: AgentState) -> str:
     audit = state.get("evidence_audit", {})
     if audit and audit.get("passed"):
         return "evidence_challenge"
+    if state.get("sources"):
+        return "answer"
     return "assimilate"
 
 
@@ -1206,7 +1364,7 @@ def route_after_evidence_challenge(state: AgentState) -> str:
         and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
         and not state.get("plan")
     ):
-        return "assimilate"
+        return "answer" if state.get("sources") else "assimilate"
     if state.get("plan") and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS:
         return "execute"
     if (
@@ -1215,7 +1373,10 @@ def route_after_evidence_challenge(state: AgentState) -> str:
         and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
     ):
         return "strategy"
-    return "assimilate"
+    # The search budget is exhausted. Supported ledger sources can still produce a
+    # useful, explicitly incomplete answer; only a run with no admissible evidence
+    # should terminate with the insufficient-evidence message alone.
+    return "answer" if state.get("sources") else "assimilate"
 
 
 def route_after_evaluate(state: AgentState) -> str:
@@ -1243,7 +1404,7 @@ def route_after_plan(state: AgentState) -> str:
         search_memory.get("search_exhausted")
         and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
     ):
-        return "assimilate"
+        return "answer" if state.get("sources") else "assimilate"
     if state["plan"]:
         return "execute"
     return "answer"
@@ -1287,7 +1448,7 @@ async def assimilate_node(state: AgentState, _model: str, _tools: list[dict]) ->
     return {"iteration": iteration}
 
 
-async def strategy_node(state: AgentState, model: str, _tools: list[dict], profile: Profile) -> dict:
+async def strategy_node(state: AgentState, model: str, tools: list[dict], profile: Profile) -> dict:
     """Evolve search queries from live search memory and verifier feedback."""
     iteration = state["iteration"] + 1
     if not profile.uses_search_memory:
@@ -1327,6 +1488,9 @@ EVIDENCE_AUDIT:
 {reflection_block}
 SEARCH_MEMORY:
 {_format_search_memory_for_prompt(memory)}
+
+AVAILABLE_DISCOVERY_TOOLS (* means required; a "tool: argument" entry must name one of these):
+{mcp_client._format_tool_catalog(tools)}
 
 Propose the next search strategy."""
 
@@ -1406,9 +1570,13 @@ async def answer_node(state: AgentState, model: str, _tools: list[dict], profile
     proof_requirements = _proof_requirements(requirements)
     quality_preferences = list(requirements.get("quality_preferences", []))
     sources_text, valid_source_ids = _format_sources_for_llm(state.get("sources", []))
+    audit = state.get("evidence_audit", {}) or {}
+    partial_answer = audit.get("passed") is False
+    evidence_gaps = [str(gap) for gap in audit.get("gaps", []) if str(gap).strip()]
     iteration = state["iteration"] + 1
 
-    print(f"\n  [ANSWER] Drafting from {len(valid_source_ids)} sources...")
+    answer_kind = "partial answer" if partial_answer else "answer"
+    print(f"\n  [ANSWER] Drafting {answer_kind} from {len(valid_source_ids)} sources...")
     if not valid_source_ids:
         draft = {
             "answer": INSUFFICIENT_EVIDENCE_MESSAGE,
@@ -1430,10 +1598,22 @@ PROOF_REQUIREMENTS:
 NON_BLOCKING_QUALITY_PREFERENCES:
 {json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
 
+PARTIAL_ANSWER_MODE:
+{json.dumps(partial_answer)}
+
+KNOWN_EVIDENCE_GAPS:
+{json.dumps(evidence_gaps, ensure_ascii=False, indent=2)}
+
 SOURCES:
 {sources_text}
 
-Answer only from SOURCES and satisfy PROOF_REQUIREMENTS. Use NON_BLOCKING_QUALITY_PREFERENCES only when supported."""
+Answer only from SOURCES. Use NON_BLOCKING_QUALITY_PREFERENCES only when supported.
+If PARTIAL_ANSWER_MODE is false, satisfy PROOF_REQUIREMENTS.
+If PARTIAL_ANSWER_MODE is true, give the most useful supported partial answer instead of refusing:
+- state clearly at the beginning that the answer is partial;
+- include every useful supported finding relevant to the question;
+- briefly identify the relevant KNOWN_EVIDENCE_GAPS;
+- never fill a gap with outside knowledge or an inference."""
 
     # Prose-first: rich, reliable prose with inline [n] citations. A large structured
     # JSON envelope is fragile on content-heavy answers, so we draft prose and verify
@@ -1472,6 +1652,9 @@ async def verify_node(state: AgentState, model: str, _tools: list[dict], profile
     quality_preferences = list(requirements.get("quality_preferences", []))
     sources_text, valid_source_ids = _format_sources_for_llm(state.get("sources", []))
     draft = state.get("draft_result", {})
+    audit = state.get("evidence_audit", {}) or {}
+    partial_answer = audit.get("passed") is False
+    evidence_gaps = [str(gap) for gap in audit.get("gaps", []) if str(gap).strip()]
     iteration = state["iteration"] + 1
 
     print("  [VERIFY] Checking claims against sources...")
@@ -1486,13 +1669,21 @@ async def verify_node(state: AgentState, model: str, _tools: list[dict], profile
 NON_BLOCKING_QUALITY_PREFERENCES:
 {json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
 
+PARTIAL_ANSWER_MODE:
+{json.dumps(partial_answer)}
+
+KNOWN_EVIDENCE_GAPS:
+{json.dumps(evidence_gaps, ensure_ascii=False, indent=2)}
+
 SOURCES:
 {sources_text}
 
 DRAFT_ANSWER:
 {draft.get("answer", "")}
 
-Return the corrected, fully-grounded answer."""
+Return the corrected, fully-grounded answer. In PARTIAL_ANSWER_MODE, preserve useful
+supported findings and the explicit partial-answer disclosure; do not reject the whole
+answer merely because KNOWN_EVIDENCE_GAPS remain."""
         verified = llm._ollama_chat(
             model,
             [{"role": "user", "content": verify_prompt}],
@@ -1592,14 +1783,13 @@ Return the compact JSON verdict."""
     }
 
 
-def build_graph(model: str, tools: list[dict], mcp_session: ClientSession | None = None, fast_model: str = "", profile: Profile | None = None):
+def build_graph(model: str, tools: list[dict], mcp_session: ClientSession | None = None, profile: Profile | None = None):
     profile = profile or FOOTNOTE_PROFILE
     graph = StateGraph(AgentState)
 
     async def _requirements(state): return await requirements_node(state, model, tools, profile)
     async def _plan(state): return await plan_node(state, model, tools, profile)
-    _fast = fast_model or model
-    async def _execute(state): return await execute_node(state, model, tools, profile, mcp_session=mcp_session, fast_model=_fast)
+    async def _execute(state): return await execute_node(state, model, tools, profile, mcp_session=mcp_session)
     async def _evidence_ledger(state): return await evidence_ledger_node(state, model, tools, profile)
     async def _evidence_challenge(state): return await evidence_challenge_node(state, model, tools, profile)
     async def _evidence_reextract(state): return await evidence_reextract_node(state, model, tools, profile)
@@ -1645,7 +1835,7 @@ def build_graph(model: str, tools: list[dict], mcp_session: ClientSession | None
     graph.add_conditional_edges(
         "evidence_reextract",
         route_after_evidence_reextract,
-        {"evidence_challenge": "evidence_challenge", "assimilate": "assimilate"},
+        {"evidence_challenge": "evidence_challenge", "answer": "answer", "assimilate": "assimilate"},
     )
     graph.add_conditional_edges("evaluate", route_after_evaluate, {"execute": "execute", "answer": "answer", "strategy": "strategy"})
 

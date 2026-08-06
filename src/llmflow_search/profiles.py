@@ -1,11 +1,11 @@
 """Server profiles — what differs between the footnote-mcp server and any other MCP server.
 
 A profile bundles the prompts and two hook functions that the graph nodes vary per server.
-``FOOTNOTE_PROFILE`` wraps the existing footnote prompts/functions verbatim, so the footnote
-path is unchanged. ``GENERIC_PROFILE`` supplies tool-agnostic prompts, forces native
-tool-calling (its ``tool_call_from_step`` always returns ``None``), and treats any tool output
-as evidence. ``select_profile`` picks one from the connected server's tool list (honoring the
-``LLMFLOW_SEARCH_PROFILE`` env override).
+``FOOTNOTE_PROFILE`` supplies the research-specific prompts and legacy step parser.
+``GENERIC_PROFILE`` supplies tool-agnostic prompts and treats arbitrary tool output as evidence.
+Both profiles first resolve exact calls through the live JSON Schemas returned by ``list_tools``;
+their hooks are compatibility fallbacks. ``select_profile`` picks one from the connected server's
+tool list (honoring the ``LLMFLOW_SEARCH_PROFILE`` env override).
 """
 
 import os
@@ -34,7 +34,9 @@ class Profile:
     post_batch: str
     # hooks
     tool_call_from_step: Callable[[str], dict | None]
-    sources_from_tool_result: Callable[[str, str], list]
+    # (tool_name, tool_result, context) -> sources. ``context`` carries run state a tool
+    # result cannot supply on its own, such as the current browser page's address.
+    sources_from_tool_result: Callable[[str, str, dict | None], list]
     fallback_step: Callable[[str], str]
     # whether the footnote search-strategy/replan machinery applies
     uses_search_memory: bool
@@ -73,7 +75,7 @@ GENERIC_PROFILE = Profile(
     evidence_challenge=prompts.EVIDENCE_CHALLENGE_SYSTEM_PROMPT,
     strategy=prompts.STRATEGY_SYSTEM_PROMPT,  # unused: generic strategy replans from scratch
     post_batch=prompts.GENERIC_POST_BATCH_PROMPT,
-    tool_call_from_step=lambda step: None,  # force native tool-calling for every step
+    tool_call_from_step=lambda step: None,  # live-schema resolver handles exact generic steps
     sources_from_tool_result=generic_sources_from_tool_result,
     fallback_step=lambda task: task,
     uses_search_memory=False,

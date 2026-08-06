@@ -17,7 +17,7 @@ from .state import AgentState
 
 
 async def main():
-    model, fast_model = pick_model()
+    model = pick_model()
 
     print(f"Connecting to MCP server ({SERVER_CMD[0]})...", end=" ", flush=True)
     params = StdioServerParameters(command=SERVER_CMD[0], args=SERVER_CMD[1:])
@@ -34,7 +34,7 @@ async def main():
 
                 profile = select_profile(t["function"]["name"] for t in tools)
                 print(f"  Profile: {profile.name}")
-                graph = build_graph(model, tools, mcp_session=session, fast_model=fast_model, profile=profile)
+                graph = build_graph(model, tools, mcp_session=session, profile=profile)
                 history: list[dict] = []  # conversation memory
 
                 print(f"\n{'='*50}")

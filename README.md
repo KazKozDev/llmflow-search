@@ -149,7 +149,10 @@ Terminal sources + JSON memory + verified PDF
 |---|---|---|
 | `LLMFLOW_SEARCH_MCP_CMD` | `footnote-mcp` | Command launched as the stdio MCP server |
 | `LLMFLOW_SEARCH_PROFILE` | `auto` | Automatic tool-based detection, `footnote`, or `generic` |
-| `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `3.0` | Minimum delay between `web_search` and `web_deep_search` requests |
+| `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `5.0` | Minimum delay between calls to scraped search engines (one call fans out to four of them) |
+| `LLMFLOW_SEARCH_API_DELAY_SECONDS` | `1.0` | Minimum delay between calls to keyed/official search APIs |
+| `LLMFLOW_SEARCH_ARCHIVE_DELAY_SECONDS` | `5.0` | Minimum delay between archive lookups |
+| `LLMFLOW_SEARCH_MAX_SEARCH_BATCH` | `3` | Rate-limited steps run per round; the rest are deferred to the next one |
 | `LLMFLOW_SEARCH_TODAY` | Current system date | Explicit `YYYY-MM-DD` date anchor; `CURRENT_DATE` is the lower-priority alias |
 | `LLMFLOW_SEARCH_RESEARCH_MEMORY` | `~/.llmflow-search/research_memory.json` | Persistent strategy, skill, and experience store |
 | `LLMFLOW_SEARCH_REPORTS_DIR` | `reports` | Output directory for verified PDF reports |
