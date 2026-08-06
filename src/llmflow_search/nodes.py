@@ -9,8 +9,8 @@ from mcp import ClientSession
 from . import llm, mcp_client
 from . import memory as _memmod
 from .config import (
-    INSUFFICIENT_EVIDENCE_MESSAGE,
     DISCOVERED_URL_CATALOG_TOP_K,
+    INSUFFICIENT_EVIDENCE_MESSAGE,
     LISTING_DRILLDOWN_TOP_K,
     MAX_EVIDENCE_ROUNDS,
     MAX_PARALLEL_FETCHES,
