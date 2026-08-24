@@ -177,8 +177,8 @@ For a real Ollama and `footnote-mcp` check: `PYTHONPATH=src .venv/bin/python scr
 
 [![CI](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg)](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+<br><br>
+
 [Issues](https://github.com/KazKozDev/llmflow-search/issues) · [Configuration](docs/configuration.md) · [License](LICENSE) · [LinkedIn](https://www.linkedin.com/in/kazkozdev/)
 
 </div>
-
-<br><br>
