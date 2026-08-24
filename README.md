@@ -12,7 +12,7 @@ Local inference · Cited sources · Open source
 
 <div align="center">
 
-![macOS](https://img.shields.io/badge/macOS-333?style=for-the-badge&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=for-the-badge&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=for-the-badge&logo=windows&logoColor=fff)
+<img src="https://img.shields.io/badge/macOS-333?style=for-the-badge&amp;logo=apple&amp;logoColor=fff" height="40" alt="macOS"> <img src="https://img.shields.io/badge/Linux-333?style=for-the-badge&amp;logo=linux&amp;logoColor=fff" height="40" alt="Linux"> <img src="https://img.shields.io/badge/Windows-333?style=for-the-badge&amp;logo=windows&amp;logoColor=fff" height="40" alt="Windows">
 
 </div>
 
