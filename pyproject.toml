@@ -16,7 +16,7 @@ dependencies = [
     "jsonschema>=4.20,<5",
     "langgraph>=0.2",
     "markdown>=3.10",
-    "mcp>=1.26,<2",
+    "mcp>=1.26,<3",
     "ollama>=0.4",
     "xhtml2pdf>=0.2.17",
 ]
