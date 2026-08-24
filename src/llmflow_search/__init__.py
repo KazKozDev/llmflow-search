@@ -1,4 +1,4 @@
-"""LLMFlow-Search — LangGraph web research agent for local Ollama.
+"""LLMFlow-Search — LangGraph web research agent for macOS with Ollama.
 
 The agent is split across submodules (``nodes``, ``llm``, ``sources``, ``memory``,
 ...). ``cli`` is the console-script entry point; the import of the app module (which

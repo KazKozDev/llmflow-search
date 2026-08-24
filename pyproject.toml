@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmflow-search"
 version = "0.2.0"
-description = "LangGraph web research agent for local Ollama"
+description = "LangGraph web research agent for macOS with Ollama"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

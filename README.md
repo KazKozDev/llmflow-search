@@ -1,17 +1,17 @@
-# LLMFlow-Search — LangGraph web research agent for local Ollama
+# LLMFlow-Search — LangGraph web research agent for macOS with Ollama
 
 Run cited, verified web research locally through Ollama and MCP tools.
 
 <!-- Editor deep links omitted: LLMFlow-Search is an MCP client. -->
 
 ```bash
-./agent.sh
+./agent.command
 ```
 
 ![LLMFlow-Search running a source-grounded web research session in the terminal](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
 
-Local Ollama · Cited answers · Fail-closed verification
-<p align="center"><img src="https://img.shields.io/badge/Ubuntu-E95420?style=for-the-badge&amp;logo=ubuntu&amp;logoColor=fff" height="40" alt="Ubuntu"></p>
+macOS launcher · Cited answers · Fail-closed verification
+<p align="center"><img src="https://img.shields.io/badge/macOS-333?style=for-the-badge&amp;logo=apple&amp;logoColor=fff" height="40" alt="macOS"></p>
 ---
 
 ## Quick start
@@ -25,7 +25,7 @@ cd llmflow-search
 # 2. Confirm that Ollama has a model.
 ollama list
 # 3. Install and start the agent.
-./agent.sh
+./agent.command
 ```
 
 The launcher installs `uv` if needed, clones `footnote-mcp` beside this checkout, syncs the locked environment, installs Chromium, and starts the REPL. Verified startup:
@@ -110,12 +110,12 @@ question → conditions → plan → MCP tools → evidence ledger
 - Ollama with at least one installed model
 - Internet access for search and page fetching
 - Chromium, installed automatically by the launcher
-- Ubuntu for the CI-verified path
+- macOS for the verified launcher and CI path
 
 ## Limitations
 
-- CI runs linting, typing, and tests on `ubuntu-latest`; it does not run live Ollama or MCP research.
-- macOS and Windows launchers exist but have not been tested end to end on clean machines.
+- CI runs linting, typing, and tests on `macos-latest`; it does not run live Ollama or MCP research.
+- Linux and Windows launchers exist but have not been tested end to end on clean machines.
 - Bounds of 40 plan steps, 5 evidence rounds, and 2 stagnant rounds can stop incomplete research.
 - PDF export needs `xhtml2pdf` and an available Unicode font; terminal output remains available on failure.
 - No Docker image or PyPI package is published; installation is from source.
