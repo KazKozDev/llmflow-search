@@ -12,11 +12,9 @@ Local inference · Cited sources · Open source
 
 <div align="center">
 
-![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=flat-square&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=flat-square&logo=windows&logoColor=fff)
+![macOS](https://img.shields.io/badge/macOS-333?style=for-the-badge&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=for-the-badge&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=for-the-badge&logo=windows&logoColor=fff)
 
 </div>
-
-<br><br>
 
 ## Quick start
 
@@ -182,3 +180,5 @@ For a real Ollama and `footnote-mcp` check: `PYTHONPATH=src .venv/bin/python scr
 [Issues](https://github.com/KazKozDev/llmflow-search/issues) · [Configuration](docs/configuration.md) · [License](LICENSE) · [LinkedIn](https://www.linkedin.com/in/kazkozdev/)
 
 </div>
+
+<br><br>
