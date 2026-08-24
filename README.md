@@ -12,8 +12,6 @@ Local inference · Cited sources · Open source
 
 ![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=flat-square&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=flat-square&logo=windows&logoColor=fff)
 
----
-
 ## Quick start
 
 ```bash
@@ -170,8 +168,6 @@ Required test coverage of 65.0% reached. Total coverage: 76.70%
 For a real Ollama and `footnote-mcp` check: `PYTHONPATH=src .venv/bin/python scripts/live_smoke.py`
 
 </details>
-
----
 
 <div align="center">
 
