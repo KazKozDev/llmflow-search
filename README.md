@@ -10,9 +10,13 @@ git clone https://github.com/KazKozDev/footnote-mcp.git && git clone https://git
 
 Local inference · Cited sources · Open source
 
-<br><br>
+<div align="center">
 
 ![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) ![Linux](https://img.shields.io/badge/Linux-333?style=flat-square&logo=linux&logoColor=fff) ![Windows](https://img.shields.io/badge/Windows-333?style=flat-square&logo=windows&logoColor=fff)
+
+</div>
+
+<br><br>
 
 ## Quick start
 
