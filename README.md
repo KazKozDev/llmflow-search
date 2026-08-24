@@ -1,6 +1,6 @@
-# LLMFlow-Search — local web-search AI agent for Ollama
+# LLMFlow-Search — local web-search AI agent
 
-Runs multi-step web research through MCP and returns a cited, verified answer.
+A LangGraph agent that runs multi-step web research through MCP and returns a cited, verified answer.
 
 ```bash
 git clone https://github.com/KazKozDev/footnote-mcp.git && git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search && uv sync --locked
