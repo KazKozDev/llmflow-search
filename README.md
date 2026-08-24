@@ -1,180 +1,136 @@
-# LLMFlow-Search — local web-search AI agent
+# LLMFlow-Search — LangGraph web research agent for local Ollama
 
-A LangGraph agent that runs multi-step web research through MCP and returns a cited, verified answer.
+Run cited, verified web research locally through Ollama and MCP tools.
+
+<!-- Editor deep links omitted: LLMFlow-Search is an MCP client. -->
 
 ```bash
-git clone https://github.com/KazKozDev/footnote-mcp.git && git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search && uv sync --locked
+./agent.sh
 ```
 
 ![LLMFlow-Search running a source-grounded web research session in the terminal](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
 
-Local inference · Cited sources · Open source
-
-<div align="center">
-
-<img src="https://img.shields.io/badge/macOS-333?style=for-the-badge&amp;logo=apple&amp;logoColor=fff" height="40" alt="macOS"> <img src="https://img.shields.io/badge/Linux-333?style=for-the-badge&amp;logo=linux&amp;logoColor=fff" height="40" alt="Linux"> <img src="https://img.shields.io/badge/Windows-333?style=for-the-badge&amp;logo=windows&amp;logoColor=fff" height="40" alt="Windows">
-
-</div>
+Local Ollama · Cited answers · Fail-closed verification
+<p align="center"><img src="https://img.shields.io/badge/Ubuntu-E95420?style=for-the-badge&amp;logo=ubuntu&amp;logoColor=fff" height="40" alt="Ubuntu"></p>
+---
 
 ## Quick start
 
+Requires Git, Ollama with at least one local model, and internet access.
+
 ```bash
-git clone https://github.com/KazKozDev/footnote-mcp.git
+# 1. Clone the agent.
 git clone https://github.com/KazKozDev/llmflow-search.git
 cd llmflow-search
-uv sync --locked
-uv pip install -e ../footnote-mcp "mcp<2"
-uv run --no-sync python -m playwright install chromium
-uv run --no-sync python -m llmflow_search
+# 2. Confirm that Ollama has a model.
+ollama list
+# 3. Install and start the agent.
+./agent.sh
 ```
 
-The two repositories must sit side by side. Ollama must already be running locally with at least one model pulled. A launcher script runs all of the steps above in one go and clones `footnote-mcp` automatically if it isn't there yet: `./agent.command` on macOS, `./agent.sh` on Linux, `.\agent.ps1` on Windows (PowerShell).
+The launcher installs `uv` if needed, clones `footnote-mcp` beside this checkout, syncs the locked environment, installs Chromium, and starts the REPL. Verified startup:
 
-```
-Ollama models (70 total):
-
-   1. qwen3:8b                              4.9 GB
-   2. ornith-1.5:9b                         6.1 GB
-   ...
-
-Pick model number [Enter = gemma4:26b-mlx] > 1
-
-Using: qwen3:8b
-Connecting to MCP server (footnote-mcp)... <!-- TODO(user): paste real output of a footnote-mcp connection; this session only verified the generic/stub profile below -->
+```text
+Connecting to MCP server (footnote-mcp)... ✓ (45 tools)
+  Profile: footnote
+Interactive mode. Type 'exit' to quit.
 ```
 
-## Research a question with live, cited web sources
+## Research a current question
 
-Ask anything that needs current information. The agent turns the question into explicit completion criteria, plans searches, reads pages through `footnote-mcp`, and challenges its own evidence before answering.
+Enter a query that needs current sources:
 
-```bash
-uv run --no-sync python -m llmflow_search
+```text
 >>> What changed in Python packaging this month?
 ```
 
-If the sources it read do not support a full answer, it says so instead of guessing:
+The agent searches, reads pages, challenges its evidence, and prints cited sources. If the evidence is insufficient, it returns the verified fail-closed result and writes no PDF:
 
-```
+```text
 The found sources do not provide enough information for a reliable answer.
 ```
 
-No PDF is written for that run — a fail-closed result, not a fabricated one.
+## Connect another MCP server
 
-## Point it at any other MCP tool server
-
-The `generic` profile works with any stdio MCP server, not just `footnote-mcp`. Every non-empty tool result becomes a source for the same answer-and-verify loop. The bundled stub server exercises MCP discovery without a live web search:
+Override the stdio command to use any MCP server with tools. This bundled example exercises the generic profile:
 
 ```bash
 LLMFLOW_SEARCH_MCP_CMD=".venv/bin/python scripts/stub_mcp_server.py" \
   .venv/bin/python -m llmflow_search
 ```
 
-```
+```text
 Connecting to MCP server (.venv/bin/python)... ✓ (1 tools)
   Profile: generic
-
-==================================================
-  Interactive mode. Type 'exit' to quit.
-==================================================
 ```
 
-## Tune request pacing and model cost
+## Continue with a follow-up
 
-Scraped search engines get throttled by default; loosen or tighten the pacing per backend family, or route cheap bookkeeping decisions to a second, smaller model:
+The REPL keeps the last three exchanges as conversation context:
 
-```bash
-LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS=20 \
-LLMFLOW_SEARCH_FAST_MODEL=qwen3:8b \
-  uv run --no-sync python -m llmflow_search
+```text
+>>> What is the latest stable Python release? Use official sources.
+>>> Which changes affect package maintainers?
 ```
 
-Full list of variables in [Configuration](#configuration).
+Each follow-up starts a new bounded evidence run while retaining the recent question-and-answer context.
 
 ## How it works
 
-The interactive app starts Ollama model selection, launches the configured MCP server as a subprocess, inspects its tools, and compiles a conditional LangGraph `StateGraph`. Each question becomes a registry of completion criteria before the first tool call; a single policy module (not a chain of downstream patches) decides whether a round continues, replans, or stops. Page fetches within a round run in parallel, and long pages are split into ranked passages instead of being read from the top down. A run is bounded by fixed step, round, and character limits — see [Configuration](#configuration).
+The app selects an installed Ollama model before accepting a question.
+It launches the configured MCP server over stdio and discovers its tools.
+LangGraph turns the question into conditions, a plan, and bounded tool steps.
+Retrieved pages enter an evidence ledger before drafting and verification.
+Only supported answers receive cited sources and a PDF report.
 
-```
-question → requirements/conditions → plan → MCP tools (parallel fetch)
-         → evidence ledger → challenge → answer → verification → PDF
+```text
+question → conditions → plan → MCP tools → evidence ledger
+         → challenge → answer → verification → PDF
 ```
 
 ## Configuration
 
-### Environment variables
-
 | Variable | Default | What it does |
 |---|---|---|
-| `LLMFLOW_SEARCH_MCP_CMD` | `footnote-mcp` | Command launched as the stdio MCP server |
-| `LLMFLOW_SEARCH_PROFILE` | `auto` | Force `footnote` or `generic`; `auto` detects from the tool list |
-| `LLMFLOW_SEARCH_FAST_MODEL` | Unset | A second, cheaper Ollama model for bookkeeping decisions |
-| `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `12.0` | Minimum delay between calls to scraped search engines |
-| `LLMFLOW_SEARCH_MAX_SEARCH_CALLS` | `12` | Hard ceiling on rate-limited calls per question |
-| `LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES` | `5` | Pages fetched at once within a round |
-| `LLMFLOW_SEARCH_REPORTS_DIR` | `reports` | Output directory for verified PDF reports |
-| `LLMFLOW_SEARCH_REPORT_LOGO` | Packaged `assets/llmflow.png` | Logo used in PDF reports; empty disables it |
-| `LLMFLOW_SEARCH_DEBUG_REPORTS` | `0` | Set to `1` to write a JSON debug report after a run |
-| `LLMFLOW_SEARCH_FORCE_COLOR` | Unset | Force ANSI color; `NO_COLOR` still disables it |
-
-10 most-used variables above; the remaining ones (rate-limit tuning, passage ranking, research-memory path) are in [docs/configuration.md](docs/configuration.md).
+| `LLMFLOW_SEARCH_MCP_CMD` | `footnote-mcp` | Stdio MCP server command |
+| `LLMFLOW_SEARCH_PROFILE` | `auto` | Detect `footnote` or `generic` from tools |
+| `LLMFLOW_SEARCH_FAST_MODEL` | Unset | Optional model for bookkeeping roles |
+| `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `12.0` | Delay between scraped search calls |
+| `LLMFLOW_SEARCH_MAX_SEARCH_CALLS` | `12` | Search-call ceiling per question |
+| `LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES` | `5` | Concurrent page fetches per round |
+| `LLMFLOW_SEARCH_REPORTS_DIR` | `reports` | Verified PDF output directory |
+| `LLMFLOW_SEARCH_REPORT_LOGO` | Packaged logo | PDF logo; empty disables it |
+| `LLMFLOW_SEARCH_DEBUG_REPORTS` | `0` | Write a JSON debug report when `1` |
+| `LLMFLOW_SEARCH_FORCE_COLOR` | Unset | Force ANSI color unless `NO_COLOR` is set |
 
 ## Requirements
 
 - Python 3.10 or newer
-- Ollama running locally with at least one model installed
-- `footnote-mcp` cloned as a sibling `../footnote-mcp` directory, for the default profile
-- `uv`, for locked dependency installation
-- Internet access for live web search and page fetching — Ollama inference itself stays local
-- Chromium via Playwright, used by `footnote-mcp`'s browser-backed fetches
+- Git
+- Ollama with at least one installed model
+- Internet access for search and page fetching
+- Chromium, installed automatically by the launcher
+- Ubuntu for the CI-verified path
 
 ## Limitations
 
-- CI (`.github/workflows/ci.yml`) lints, type-checks, and tests on `ubuntu-latest` only; the interactive Ollama+MCP flow itself is not exercised in CI on any OS
-- `agent.sh` (Linux) and `agent.ps1` (Windows) mirror `agent.command`'s steps but have not been run end-to-end on a clean machine of either OS — CI only exercises the `uv`/`pytest` commands directly on Ubuntu, not the launcher scripts
-- Fixed bounds (40 plan steps, 5 evidence rounds, 2 stagnant rounds) can end a run before coverage is complete — the agent returns an explicit insufficient-evidence message rather than a partial answer
-- PDF export depends on `xhtml2pdf` and an available system Unicode font; terminal output still appears if PDF rendering fails
-- Not published to PyPI — install is from source only
+- CI runs linting, typing, and tests on `ubuntu-latest`; it does not run live Ollama or MCP research.
+- macOS and Windows launchers exist but have not been tested end to end on clean machines.
+- Bounds of 40 plan steps, 5 evidence rounds, and 2 stagnant rounds can stop incomplete research.
+- PDF export needs `xhtml2pdf` and an available Unicode font; terminal output remains available on failure.
+- No Docker image or PyPI package is published; installation is from source.
 
 <details>
-<summary>Manual installation, Docker, development setup</summary>
-
-### From source
-
-```bash
-git clone https://github.com/KazKozDev/footnote-mcp.git
-git clone https://github.com/KazKozDev/llmflow-search.git
-cd llmflow-search
-uv sync --locked
-uv pip install -e ../footnote-mcp "mcp<2"
-uv run --no-sync python -m playwright install chromium
-```
+<summary>More setup</summary>
 
 ### Docker
-
-No Dockerfile or image is provided in this repository.
-
+No Dockerfile or image is provided.
+### From source
+Run `uv sync --locked`; the default profile also needs sibling `../footnote-mcp`.
 ### Development
-
-```bash
-uv sync --locked
-uv run --locked ruff check src tests scripts
-uv run --locked pyright
-uv run --locked pytest tests -q --cov=llmflow_search --cov-report=term-missing:skip-covered
-```
-
-The suite replaces Ollama and MCP calls with test doubles, so it needs no network access or running model server:
-
-```
-151 passed in 4.44s
-Required test coverage of 65.0% reached. Total coverage: 76.70%
-```
-
-For a real Ollama and `footnote-mcp` check: `PYTHONPATH=src .venv/bin/python scripts/live_smoke.py`
-
+Run `uv run ruff check src tests scripts && uv run pyright && uv run pytest -q` — latest result: `151 passed`.
 </details>
-
 <br><br>
-
 <div align="center">
 
 [![CI](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg)](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

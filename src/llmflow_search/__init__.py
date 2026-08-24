@@ -1,4 +1,4 @@
-"""LLMFlow-Search — a LangGraph research agent that drives the footnote-mcp server.
+"""LLMFlow-Search — LangGraph web research agent for local Ollama.
 
 The agent is split across submodules (``nodes``, ``llm``, ``sources``, ``memory``,
 ...). ``cli`` is the console-script entry point; the import of the app module (which

@@ -7,7 +7,7 @@ Set-Location $ProjectDir
 
 Write-Host ""
 Write-Host "LLMFlow-Search" -ForegroundColor Blue
-Write-Host "local web-search AI agent for Ollama" -ForegroundColor DarkGray
+Write-Host "LangGraph web research agent for local Ollama" -ForegroundColor DarkGray
 Write-Host ""
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
