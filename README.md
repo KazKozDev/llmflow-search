@@ -2,6 +2,12 @@
 
 Run cited, verified web research locally through Ollama and MCP tools.
 
+
+
+```bash
+uvx llmflow-search
+```
+
 ![Running a cited web research session in LLMFlow-Search](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
 
 Runs on macOS · Fail-closed answers · Open source
@@ -10,12 +16,11 @@ Runs on macOS · Fail-closed answers · Open source
 
 ## Quick start
 
-Install Git and Ollama, then pull at least one local model.
+With Git and Ollama installed, clone the source, pull a model, and launch:
 
 ```bash
-git clone https://github.com/KazKozDev/llmflow-search.git
-cd llmflow-search
-ollama list
+git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search
+ollama pull qwen2.5:7b
 ./agent.command
 ```
 
@@ -102,14 +107,14 @@ question → conditions → plan → MCP tools → evidence → challenge → an
 
 - CI does not run live Ollama or MCP research.
 - Linux and Windows launchers are not covered by CI.
+- Passage relevance is approximate: pages use overlapping 700-character windows.
 - Research stops after 40 plan steps, 5 evidence rounds, or 2 stagnant rounds.
-- PDF export depends on `xhtml2pdf` and an available Unicode font.
 - No Docker image or PyPI package is published.
 
 <details>
 <summary>Manual installation, Docker, development setup</summary>
 ### From source
-Run `uv sync --locked`, install sibling `../footnote-mcp` with `mcp<2`, then run `uv run --no-sync llmflow-search`.
+Run `uv sync --locked && uv pip install --python .venv/bin/python -e ../footnote-mcp "mcp<2" && uv run --no-sync llmflow-search`.
 ### Docker
 No Dockerfile or image is provided.
 ### Development
