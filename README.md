@@ -1,18 +1,18 @@
 # LLMFlow-Search — LangGraph web research agent for macOS with Ollama
 
-Run cited, verified web research locally through Ollama and MCP tools.
+Ask any question and a local Ollama model searches the web through MCP tools, weighs the evidence, then answers with citations or admits defeat.
 
 
 
 ```bash
-uvx llmflow-search
+git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search && ./agent.command
 ```
 
 ![Running a cited web research session in LLMFlow-Search](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
 
-Runs on macOS · Fail-closed answers · Open source
+Local Ollama · Cited web answers · MIT licensed
+
 ![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff)
----
 
 ## Quick start
 
@@ -101,12 +101,12 @@ question → conditions → plan → MCP tools → evidence → challenge → an
 - Ollama with at least one installed model
 - Internet access for search and page fetching
 - Chromium, installed automatically by the launcher
-- macOS for the CI-tested launcher path
+- macOS, Linux, or Windows; `agent.command` is the macOS launcher
 
 ## Limitations
 
 - CI does not run live Ollama or MCP research.
-- Linux and Windows launchers are not covered by CI.
+- No launcher script is covered by CI; the one job runs lint, types, and tests on macOS.
 - Passage relevance is approximate: pages use overlapping 700-character windows.
 - Research stops after 40 plan steps, 5 evidence rounds, or 2 stagnant rounds.
 - No Docker image or PyPI package is published.
@@ -120,8 +120,6 @@ No Dockerfile or image is provided.
 ### Development
 Run `uv run ruff check src tests scripts && uv run pyright && uv run pytest tests -q`.
 </details>
-
----
 
 <div align="center">
 
