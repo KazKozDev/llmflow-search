@@ -121,6 +121,8 @@ No Dockerfile or image is provided.
 Run `uv run ruff check src tests scripts && uv run pyright && uv run pytest tests -q`.
 </details>
 
+<br><br>
+
 <div align="center">
 
 [![CI](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg)](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
