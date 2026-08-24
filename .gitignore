@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.DS_Store
+.env
+.env.*
+
+# Python packaging build artifacts
+*.egg-info/
+build/
+dist/
+
+# Generated reports and temporary rendering files
+reports/
+output/
+tmp/

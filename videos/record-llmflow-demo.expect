@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+
+set timeout 1200
+set query "What is the latest stable Python release? Use official sources and cite them."
+
+set env(PS1) "llmflow-search > "
+spawn zsh -f
+expect "llmflow-search > "
+send -- "./agent.command\r"
+
+expect "Pick model number"
+send -- "$query\r"
+
+expect -re {Steps: [0-9]+ \| Type next question}
+send -- "exit\r"
+
+expect "Press Enter to close"
+send -- "\r"
+expect "llmflow-search > "
+send -- "exit\r"
+expect eof
