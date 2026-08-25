@@ -147,6 +147,18 @@ def test_mcp_result_text_raises_server_reported_errors():
         mcp_client._mcp_result_text(result)
 
 
+def test_mcp_tool_call_has_a_finite_deadline(monkeypatch):
+    class HangingSession:
+        async def call_tool(self, name, args):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(mcp_client, "MCP_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(
+            mcp_client._call_mcp_tool("local_fact", {}, session=HangingSession())
+        )
+
+
 def test_jitter_widens_the_interval_so_calls_are_not_metronomic(monkeypatch):
     sleeps = []
     clock = iter([100.0, 100.0, 100.0])

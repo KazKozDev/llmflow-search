@@ -15,6 +15,8 @@ unless noted otherwise. The most commonly used ones are also listed in the main
 | `LLMFLOW_SEARCH_MAX_SEARCH_BATCH` | `2` | Rate-limited steps run per round; the rest are deferred to the next one | `config.py` |
 | `LLMFLOW_SEARCH_MAX_SEARCH_CALLS` | `12` | Hard ceiling on rate-limited calls spent answering one question | `config.py` |
 | `LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES` | `5` | Pages fetched at once within a round | `config.py` |
+| `LLMFLOW_SEARCH_MCP_TIMEOUT_SECONDS` | `120` | Deadline for each MCP initialize, list, or tool call | `config.py` |
+| `LLMFLOW_SEARCH_OLLAMA_TIMEOUT_SECONDS` | `300` | HTTP deadline for Ollama list/chat requests | `config.py` |
 | `LLMFLOW_SEARCH_READ_RANKING` | `search_rank` | Orders read candidates by search rank, or by `passage_bm25` (best-scoring passage per URL) | `config.py` |
 | `LLMFLOW_SEARCH_RELEVANCE_EXCERPTS` | `1` (on) | Shows the question-relevant passages of a long page instead of just its first characters; `0` restores head-of-document behavior | `config.py` |
 | `LLMFLOW_SEARCH_FAST_MODEL` | Unset | A second, cheaper Ollama model for bookkeeping decisions | `config.py` |
@@ -26,6 +28,14 @@ unless noted otherwise. The most commonly used ones are also listed in the main
 | `LLMFLOW_SEARCH_DEBUG_REPORTS` | `0` | Set to `1` to write a JSON debug report after a completed run | `reports.py` |
 | `LLMFLOW_SEARCH_DEBUG_REPORT_DIR` | `~/.llmflow-search/debug_reports` | JSON debug-report directory | `reports.py` |
 | `LLMFLOW_SEARCH_FORCE_COLOR` | Unset | Forces ANSI color for `1`/`true`/`yes`/`on`; `NO_COLOR` still disables automatic color | `console.py` |
+
+## MCP tool authorization
+
+Tool descriptions may declare `[effect: read_only]`, `[effect: local_write]`,
+`[effect: external_write]`, or `[effect: destructive]`. Undeclared tools are classified
+conservatively from their action name. Read-only calls run automatically; every other class
+requires explicit confirmation in the interactive launcher and is denied when no authorizer
+is available.
 
 ## Fixed limits (not configurable via environment variables)
 

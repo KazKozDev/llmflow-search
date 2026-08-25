@@ -3,11 +3,12 @@
 import asyncio
 import json
 
-from langgraph.graph import END, StateGraph
 from mcp import ClientSession
 
 from . import llm, mcp_client, policy, trace
 from . import memory as _memmod
+from .answering import answer_node as answer_node
+from .answering import verify_node as verify_node
 from .config import (
     DISCOVERED_URL_CATALOG_TOP_K,
     INSUFFICIENT_EVIDENCE_MESSAGE,
@@ -16,10 +17,7 @@ from .config import (
     MAX_PARALLEL_FETCHES,
     MAX_PLAN_STEPS,
     MAX_SEARCH_CALLS_PER_QUESTION,
-    MAX_STAGNANT_ROUNDS,
     READ_RANKING,
-    ROUNDUP_MIN_CLAIMS,
-    ROUNDUP_MIN_SOURCES,
     SEARCH_GROUP_DELAY_SECONDS,
     SNIPPET_CATALOG_MAX_CHARS,
     SNIPPET_MEMORY_MAX_CHARS,
@@ -27,6 +25,13 @@ from .config import (
 )
 from .console import print
 from .constraints import build_registry, format_for_prompt, open_constraints
+from .evidence import (
+    _evidence_challenge_schema,
+    _evidence_ledger_schema,
+    _normalize_evidence_challenge_result,
+    _normalize_evidence_ledger_result,
+    _numbered_requirements_block,
+)
 from .llm import _json_loads_best_effort
 from .observations import (
     _diagnose_observation_with_model,
@@ -39,8 +44,33 @@ from .policy import (
     URL_STEP_PREFIXES,
     RoundView,
 )
-from .profiles import FOOTNOTE_PROFILE, Profile
+from .profiles import Profile
 from .reports import _assimilate_research
+from .requirements import (
+    _normalize_requirements,
+    _proof_requirements,
+)
+from .requirements import (
+    requirements_node as requirements_node,
+)
+from .routing import (
+    route_after_evidence_challenge as route_after_evidence_challenge,
+)
+from .routing import (
+    route_after_evidence_ledger as route_after_evidence_ledger,
+)
+from .routing import (
+    route_after_evidence_reextract as route_after_evidence_reextract,
+)
+from .routing import (
+    route_after_execute as route_after_execute,
+)
+from .routing import (
+    route_after_plan as route_after_plan,
+)
+from .routing import (
+    route_after_verify as route_after_verify,
+)
 from .search_memory import (
     _DISCOVERY_SEARCH_TOOLS,
     _append_unique,
@@ -50,7 +80,6 @@ from .search_memory import (
     _update_search_memory,
 )
 from .sources import (
-    _audit_evidence_state,
     _effective_question,
     _format_sources_for_llm,
     _merge_sources,
@@ -59,115 +88,12 @@ from .sources import (
     _urls_in_text,
 )
 from .state import AgentState
+from .tool_policy import ToolAuthorizer, authorize_tool_call
 from .tool_steps import (
     _step_identity,
     _strip_spurious_head,
     _tool_call_from_schema_step,
 )
-
-
-def _default_requirements(question: str) -> dict:
-    return {
-        "target": question,
-        "answer_mode": "strict",
-        "scope": "answer the user question",
-        "granularity": None,
-        "unit_or_pair": None,
-        "required_coverage": "all explicitly requested parts of the question",
-        "output_format": "direct answer",
-        "quality_preferences": [],
-        "completion_criteria": [
-            "The answer addresses every explicit requirement in the user question.",
-            "Every factual claim is grounded in the provided sources.",
-            "The answer uses one consistent unit, currency pair, or measurement basis unless the user explicitly asked for multiple.",
-        ],
-        "missing_data_policy": "If any required part cannot be sourced, mark task_complete=false and list the gap.",
-        "search_hints": [],
-    }
-
-
-def _normalize_requirements(raw: dict | None, question: str) -> dict:
-    defaults = _default_requirements(question)
-    if not isinstance(raw, dict):
-        return defaults
-    result = defaults | {
-        key: value
-        for key, value in raw.items()
-        if key in defaults and value not in (None, "")
-    }
-    for key in ("quality_preferences", "completion_criteria", "search_hints"):
-        if not isinstance(result.get(key), list):
-            result[key] = defaults[key]
-        result[key] = [str(item) for item in result[key] if str(item).strip()]
-    if result.get("answer_mode") not in ("strict", "roundup"):
-        result["answer_mode"] = "strict"
-    return result
-
-
-def _proof_requirements(requirements: dict) -> dict:
-    """Return the user-contract fields that can block a grounded answer."""
-    return {
-        "target": requirements.get("target"),
-        "scope": requirements.get("scope"),
-        "granularity": requirements.get("granularity"),
-        "unit_or_pair": requirements.get("unit_or_pair"),
-        "required_coverage": requirements.get("required_coverage"),
-        "output_format": requirements.get("output_format"),
-        "completion_criteria": list(requirements.get("completion_criteria", [])),
-        "missing_data_policy": requirements.get("missing_data_policy"),
-    }
-
-
-REQUIREMENTS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "target": {"type": "string"},
-        "scope": {"type": "string"},
-        "granularity": {"type": ["string", "null"]},
-        "unit_or_pair": {"type": ["string", "null"]},
-        "required_coverage": {"type": "string"},
-        "output_format": {"type": "string"},
-        "quality_preferences": {"type": "array", "items": {"type": "string"}},
-        "completion_criteria": {"type": "array", "items": {"type": "string"}},
-        "missing_data_policy": {"type": "string"},
-        "search_hints": {"type": "array", "items": {"type": "string"}},
-        "answer_mode": {"type": "string", "enum": ["strict", "roundup"]},
-    },
-    "required": ["target", "scope", "completion_criteria", "answer_mode"],
-}
-
-
-async def requirements_node(
-    state: AgentState, model: str, _tools: list[dict], profile: Profile
-) -> dict:
-    """Extract task completion requirements before planning."""
-    if state.get("requirements_result"):
-        return {"iteration": state["iteration"] + 1}
-
-    question = _effective_question(state["task"])
-    iteration = state["iteration"] + 1
-    print("\n  [REQUIREMENTS] Extracting completion criteria...")
-    requirements_input = (
-        f"QUESTION:\n{question}\n\nExtract task completion requirements."
-    )
-    role_model = llm.model_for_role(model, "requirements")
-    with trace.model_call("requirements", requirements_input, role_model):
-        content = llm._ollama_chat_schema(
-            role_model,
-            [{"role": "user", "content": requirements_input}],
-            system=profile.requirements,
-            format_schema=REQUIREMENTS_SCHEMA,
-        )
-    raw = _json_loads_best_effort(content, {})
-    requirements = _normalize_requirements(raw, question)
-    criteria = requirements.get("completion_criteria", [])
-    print(
-        f"  [REQUIREMENTS] {len(criteria)} criteria, answer_mode={requirements.get('answer_mode')}"
-    )
-    for i, criterion in enumerate(criteria[:4], 1):
-        print(f"    {i}. {criterion[:100]}")
-    return {"requirements_result": requirements, "iteration": iteration}
-
 
 # Every JSON-producing node decodes against its schema, not against a prompt asking
 # nicely for JSON: a malformed field becomes impossible rather than merely unlikely,
@@ -180,16 +106,6 @@ POST_BATCH_SCHEMA = {
         "reason": {"type": "string"},
         "next_steps": {"type": "array", "items": {"type": "string"}},
         "decision": {"type": "string", "enum": ["DONE", "CONTINUE", "NEXT"]},
-    },
-    "required": ["reason", "decision"],
-}
-
-
-EVAL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "reason": {"type": "string"},
-        "decision": {"type": "string", "enum": ["CONTINUE", "REPLAN", "DONE"]},
     },
     "required": ["reason", "decision"],
 }
@@ -214,16 +130,6 @@ STRATEGY_SCHEMA = {
 }
 
 
-VERIFY_VERDICT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "missing": {"type": "array", "items": {"type": "string"}},
-        "notes": {"type": "array", "items": {"type": "string"}},
-        "coverage_complete": {"type": "boolean"},
-    },
-    "required": ["missing", "notes", "coverage_complete"],
-}
-
 
 PLAN_STEPS_SCHEMA = {
     "type": "object",
@@ -243,303 +149,6 @@ PLAN_STEPS_SCHEMA = {
     "required": ["steps"],
 }
 
-
-def _numbered_requirements_block(completion_criteria: list[str]) -> str:
-    if not completion_criteria:
-        return "(none)"
-    return "\n".join(f"{i}. {c}" for i, c in enumerate(completion_criteria))
-
-
-def _parse_indexed_item(item, requirement_count: int) -> tuple[str, int | None]:
-    """Parse a {requirement_index, text} gap item against the numbered PROOF_REQUIREMENTS list.
-
-    requirement_index is schema-required (see _evidence_ledger_schema/_evidence_challenge_schema),
-    but decoding is only truly enforced on GGUF-backed models (see llm._schema_capable_model) — this
-    is a defensive parse for whatever the model actually returned, not the primary correctness
-    mechanism. A missing/out-of-range index means the item cannot be tied to a real requirement.
-    """
-    if isinstance(item, dict):
-        text = str(item.get("text") or "").strip()[:300]
-        raw_idx = item.get("requirement_index")
-        try:
-            idx = int(raw_idx) if raw_idx is not None else None
-        except (TypeError, ValueError):
-            idx = None
-    elif isinstance(item, str):
-        text, idx = item.strip()[:300], None
-    else:
-        text, idx = "", None
-    if idx is None or not (0 <= idx < requirement_count):
-        idx = None
-    return text, idx
-
-
-def _evidence_ledger_schema(requirement_count: int) -> dict:
-    max_index = max(requirement_count - 1, 0)
-    indexed_gap = {
-        "type": "object",
-        "properties": {
-            "requirement_index": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": max_index,
-            },
-            "text": {"type": "string"},
-        },
-        "required": ["requirement_index", "text"],
-    }
-    # Property order is generation order under constrained decoding: the verdict comes
-    # last so it is written after the rows and reasoning that justify it, not before.
-    return {
-        "type": "object",
-        "properties": {
-            "ledger": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "claim_id": {"type": "string"},
-                        "requirement_index": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": max_index,
-                        },
-                        "requirement": {"type": "string"},
-                        "proposed_claim": {"type": "string"},
-                        "event_date": {"type": "string"},
-                        "publication_date": {"type": "string"},
-                        "location": {"type": "string"},
-                        "source_ids": {"type": "array", "items": {"type": "integer"}},
-                        "source_quality": {"type": "string"},
-                        "support_status": {
-                            "type": "string",
-                            "enum": ["supported", "partial", "missing", "rejected"],
-                        },
-                        "support_level": {
-                            "type": "string",
-                            "enum": ["supported", "partial", "missing"],
-                        },
-                        "can_use_in_answer": {"type": "boolean"},
-                        "missing": {"type": "string"},
-                        "rejection_reason": {"type": "string"},
-                    },
-                    "required": [
-                        "claim_id",
-                        "requirement_index",
-                        "support_status",
-                        "support_level",
-                        "can_use_in_answer",
-                    ],
-                },
-            },
-            "global_missing": {"type": "array", "items": indexed_gap},
-            "next_steps": {"type": "array", "items": {"type": "string"}},
-            "reason": {"type": "string"},
-            "answer_ready": {"type": "boolean"},
-        },
-        "required": [
-            "ledger",
-            "global_missing",
-            "next_steps",
-            "reason",
-            "answer_ready",
-        ],
-    }
-
-
-def _evidence_challenge_schema(requirement_count: int) -> dict:
-    max_index = max(requirement_count - 1, 0)
-    return {
-        "type": "object",
-        "properties": {
-            "blocking_gaps": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "requirement_index": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": max_index,
-                        },
-                        "text": {"type": "string"},
-                    },
-                    "required": ["requirement_index", "text"],
-                },
-            },
-            "next_steps": {"type": "array", "items": {"type": "string"}},
-            "reason": {"type": "string"},
-            "answer_permitted": {"type": "boolean"},
-        },
-        "required": ["blocking_gaps", "next_steps", "reason", "answer_permitted"],
-    }
-
-
-def _normalize_evidence_ledger_result(
-    raw: dict | None,
-    candidate_sources: list[dict],
-    completion_criteria: list[str] | None = None,
-    answer_mode: str = "strict",
-) -> dict:
-    raw = raw if isinstance(raw, dict) else {}
-    completion_criteria = completion_criteria or []
-    requirement_count = len(completion_criteria)
-    source_count = len(candidate_sources)
-    ledger = []
-    supported_source_ids: set[int] = set()
-    supported_claims = 0
-    dropped_gaps: list[str] = []
-    for item in raw.get("ledger", []):
-        if not isinstance(item, dict):
-            continue
-        source_ids = []
-        for raw_id in item.get("source_ids", []):
-            try:
-                source_id = int(raw_id)
-            except (TypeError, ValueError):
-                continue
-            if 1 <= source_id <= source_count and source_id not in source_ids:
-                source_ids.append(source_id)
-        support_status = (
-            str(item.get("support_status") or item.get("support_level") or "missing")
-            .strip()
-            .lower()
-        )
-        if support_status not in {"supported", "partial", "missing", "rejected"}:
-            support_status = "missing"
-        support_level = str(item.get("support_level") or "missing").strip().lower()
-        if support_level not in {"supported", "partial", "missing"}:
-            support_level = (
-                "missing" if support_status == "rejected" else support_status
-            )
-        if support_status == "supported":
-            support_level = "supported"
-        can_use = (
-            bool(item.get("can_use_in_answer"))
-            and support_level == "supported"
-            and bool(source_ids)
-        )
-        if can_use:
-            supported_source_ids.update(source_ids)
-            supported_claims += 1
-        claim_id = str(item.get("claim_id") or "").strip()[:80]
-        if not claim_id:
-            claim_id = f"claim_{len(ledger) + 1}"
-        _, requirement_index = _parse_indexed_item(item, requirement_count)
-        missing_text = str(item.get("missing") or "").strip()[:300]
-        if missing_text and requirement_index is None:
-            dropped_gaps.append(missing_text)
-            missing_text = ""
-        ledger.append(
-            {
-                "claim_id": claim_id,
-                "requirement_index": requirement_index,
-                "requirement": str(item.get("requirement") or "").strip()[:200],
-                "proposed_claim": str(item.get("proposed_claim") or "").strip()[:500],
-                "event_date": str(item.get("event_date") or "").strip()[:40],
-                "publication_date": str(item.get("publication_date") or "").strip()[
-                    :40
-                ],
-                "location": str(item.get("location") or "").strip()[:120],
-                "source_ids": source_ids,
-                "source_quality": str(item.get("source_quality") or "unknown")
-                .strip()
-                .lower()[:40],
-                "support_status": support_status,
-                "support_level": support_level,
-                "can_use_in_answer": can_use,
-                "missing": missing_text,
-                "rejection_reason": str(item.get("rejection_reason") or "").strip()[
-                    :300
-                ],
-            }
-        )
-
-    global_missing = []
-    for raw_gap in raw.get("global_missing", []):
-        text, idx = _parse_indexed_item(raw_gap, requirement_count)
-        if not text:
-            continue
-        if idx is None:
-            dropped_gaps.append(text)
-        else:
-            global_missing.append(text)
-
-    next_steps = []
-    for step in raw.get("next_steps", []):
-        step = str(step).strip()
-        if step and ":" in step and step not in next_steps:
-            next_steps.append(step[:500])
-
-    # answer_ready is derived from validated structured fields only — the model's own
-    # raw "answer_ready" self-report is not trusted, since a hallucinated (unindexed)
-    # concern must not be able to block readiness just because the model believed it.
-    indexed_rows = [item for item in ledger if item["requirement_index"] is not None]
-    if answer_mode == "roundup":
-        enough_roundup_evidence = (
-            len(supported_source_ids) >= ROUNDUP_MIN_SOURCES
-            or supported_claims >= ROUNDUP_MIN_CLAIMS
-        )
-        # A roundup claim can satisfy several broad requirements at once even though
-        # the ledger schema stores only one requirement_index per row. Requiring an
-        # indexed row for every criterion therefore creates false negatives. The
-        # model's indexed global_missing list remains the deterministic blocker.
-        answer_ready = bool(ledger) and not global_missing and enough_roundup_evidence
-    else:
-        no_real_blockers = not global_missing and all(
-            item["support_level"] == "supported" and item["can_use_in_answer"]
-            for item in indexed_rows
-        )
-        answer_ready = bool(ledger) and no_real_blockers
-    admitted = [
-        candidate_sources[source_id - 1] for source_id in sorted(supported_source_ids)
-    ]
-    return {
-        "answer_ready": answer_ready,
-        "answer_mode": answer_mode,
-        "ledger": ledger,
-        "global_missing": list(dict.fromkeys(global_missing)),
-        "dropped_gaps": list(dict.fromkeys(dropped_gaps)),
-        "next_steps": next_steps[:4],
-        "reason": str(raw.get("reason") or "").strip()[:500],
-        "candidate_count": source_count,
-        "admissible_count": len(admitted),
-        "supported_claim_count": supported_claims,
-        "admissible_sources": admitted,
-    }
-
-
-def _normalize_evidence_challenge_result(
-    raw: dict | None, ledger_result: dict | None, requirement_count: int = 0
-) -> dict:
-    raw = raw if isinstance(raw, dict) else {}
-    ledger_result = ledger_result if isinstance(ledger_result, dict) else {}
-    blocking_gaps = []
-    dropped_gaps = []
-    for raw_gap in raw.get("blocking_gaps", []):
-        text, idx = _parse_indexed_item(raw_gap, requirement_count)
-        if not text:
-            continue
-        if idx is None:
-            dropped_gaps.append(text)
-        else:
-            blocking_gaps.append(text)
-    next_steps = []
-    for step in raw.get("next_steps", []):
-        step = str(step).strip()
-        if step and ":" in step and step not in next_steps:
-            next_steps.append(step[:500])
-    # answer_permitted is derived from the (already-sanitized) ledger readiness and the
-    # (already-sanitized) blocking_gaps — the model's own raw "answer_permitted" flag is
-    # not trusted, for the same reason as evidence_ledger's answer_ready above.
-    answer_permitted = bool(ledger_result.get("answer_ready")) and not blocking_gaps
-    return {
-        "answer_permitted": answer_permitted,
-        "blocking_gaps": list(dict.fromkeys(blocking_gaps)),
-        "dropped_gaps": list(dict.fromkeys(dropped_gaps)),
-        "next_steps": next_steps[:4],
-        "reason": str(raw.get("reason") or "").strip()[:500],
-    }
 
 
 def _insufficient_evidence_update(
@@ -899,6 +508,7 @@ async def _execute_single_step(
     requirements: dict,
     profile: Profile,
     source_context: dict | None = None,
+    tool_authorizer: ToolAuthorizer | None = None,
 ) -> tuple[str, str, list, dict]:
     """Execute one resolved step. Returns (step, result_text, sources, search_memory_updates)."""
     # A planner occasionally wraps a step as "tool: web_read: <url>"; normalize so the
@@ -949,6 +559,16 @@ async def _execute_single_step(
             )
         tool_calls = response.get("tool_calls", [])
 
+    if len(tool_calls) > 1:
+        # The execution contract is exactly one action per plan step. Aggregating a model's
+        # surprise batch here would bypass per-call budgets, authorization, and provenance.
+        return (
+            step,
+            f"\n[step rejected: model returned {len(tool_calls)} tool calls; exactly one is allowed]\n",
+            [],
+            {},
+        )
+
     result_text = ""
     step_sources: list = []
     sm_updates: dict = {}
@@ -968,6 +588,7 @@ async def _execute_single_step(
                     args = {}
             print(f"    [{name}]", end=" ", flush=True)
             try:
+                await authorize_tool_call(name, args, tools, tool_authorizer)
                 # Timed here rather than at the transport: this is the boundary the agent
                 # pays for, and it is the one that stays comparable when the transport
                 # changes. The rate-limit wait inside is traced separately, so the two can
@@ -1002,6 +623,12 @@ async def _execute_single_step(
                     step_sources, observation
                 )
                 print(f"→ {len(tool_result)} chars")
+            except TimeoutError:
+                # A timed-out long-lived stdio session must escape to its owner. Exiting
+                # stdio_client then closes stdin and escalates SIGTERM -> SIGKILL if the
+                # child ignores shutdown. Continuing with that session risks reusing a
+                # wedged subprocess for every remaining step.
+                raise
             except Exception as e:
                 result_text += f"\n[{name} error: {e}]\n"
                 trace.emit(
@@ -1018,6 +645,7 @@ async def execute_node(
     tools: list[dict],
     profile: Profile,
     mcp_session: ClientSession | None = None,
+    tool_authorizer: ToolAuthorizer | None = None,
 ) -> dict:
     """Execute a batch of same-tool plan steps in parallel."""
     plan = state["plan"]
@@ -1145,6 +773,7 @@ async def execute_node(
                 requirements,
                 profile,
                 source_context,
+                tool_authorizer,
             )
 
     batch_results = await asyncio.gather(
@@ -1453,6 +1082,7 @@ Build the evidence ledger and choose next tool steps if proof is still missing."
         candidate_sources,
         completion_criteria,
         answer_mode,
+        valid_source_ids,
     )
     admitted = ledger_result["admissible_sources"]
     _emit_evidence_admitted(candidate_sources, admitted, ledger_result)
@@ -1723,7 +1353,7 @@ async def evidence_reextract_node(
     answer_mode = requirements.get("answer_mode", "strict")
     quality_preferences = list(requirements.get("quality_preferences", []))
     candidate_sources = list(state.get("candidate_sources") or state.get("sources", []))
-    sources_text, _ = _format_sources_for_llm(candidate_sources, question)
+    sources_text, valid_source_ids = _format_sources_for_llm(candidate_sources, question)
     iteration = state["iteration"] + 1
 
     print("  [REEXTRACT] Re-mining already-fetched sources (no new tool calls)...")
@@ -1759,6 +1389,7 @@ build the evidence ledger from what is already fetched only."""
         candidate_sources,
         completion_criteria,
         answer_mode,
+        valid_source_ids,
     )
     admitted = ledger_result["admissible_sources"]
     _emit_evidence_admitted(candidate_sources, admitted, ledger_result)
@@ -1803,281 +1434,6 @@ build the evidence ledger from what is already fetched only."""
     return update
 
 
-async def evaluate_node(
-    state: AgentState, model: str, _tools: list[dict], profile: Profile
-) -> dict:
-    """Decide: CONTINUE, REPLAN, or DONE."""
-    plan = state["plan"]
-    completed = state["completed_steps"]
-    scratchpad = state["scratchpad"]
-    task = state["task"]
-    iteration = state["iteration"] + 1
-
-    if not plan:
-        audit = _audit_evidence_state(state)  # type: ignore[arg-type]
-        print(f"  [EVAL] sources in state: {len(state.get('sources', []))}")
-        if audit.get("passed"):
-            print("  [EVAL] Evidence audit passed → ANSWER")
-            return {"evidence_audit": audit, "iteration": iteration}
-        print("  [EVAL] Evidence audit failed → STRATEGY")
-        for gap in audit.get("gaps", [])[:4]:
-            print(f"    gap: {gap[:120]}")
-        search_memory = _merge_search_memory(state.get("search_memory"))
-
-        # Reflexion: LLM diagnoses why search failed and what to try next
-        reflection_input = f"""Task: {_effective_question(state['task'])}
-
-Gaps identified:
-{json.dumps(audit.get('gaps', []), ensure_ascii=False)}
-
-Queries already attempted:
-{json.dumps(search_memory.get('attempted_queries', []), ensure_ascii=False)}
-
-Sources collected: {len(state.get('sources', []))}
-Scratchpad (last 1500 chars):
-{state.get('scratchpad', '')[-1500:]}
-
-In 2-3 sentences, diagnose WHY the search failed and what specific approach should fix it next round."""
-
-        reflect_model = llm.model_for_role(model, "reflect")
-        with trace.model_call("reflect", reflection_input, reflect_model):
-            reflection_response = llm._ollama_chat(
-                reflect_model,
-                [{"role": "user", "content": reflection_input}],
-                tools=None,
-                system="You are a search strategist. Be concise and specific. Output plain text only.",
-            )
-        reflection = (reflection_response.get("content") or "").strip()
-        if reflection:
-            print(f"  [REFLECT] {reflection[:200]}")
-            search_memory.setdefault("reflections", []).append(reflection)
-
-        verification = {
-            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "claim_checks": [],
-            "task_complete": False,
-            "coverage": {
-                "requirements_addressed": [],
-                "overall_status": "missing",
-            },
-            "gaps": audit.get("gaps", []),
-            "insufficient_evidence": True,
-            "audit": audit,
-        }
-        return {
-            "evidence_audit": audit,
-            "verification_result": verification,
-            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "search_memory": search_memory,
-            "evidence_round": state.get("evidence_round", 0) + 1,
-            "iteration": iteration,
-        }
-
-    # if we've done too many steps, force answer
-    replan_count = state.get("replan_count", 0)
-    if len(completed) >= MAX_PLAN_STEPS or replan_count >= 3:
-        reason = "max steps" if len(completed) >= MAX_PLAN_STEPS else "too many replans"
-        print(f"  [EVAL] {reason} → DONE")
-        return {"plan": [], "iteration": iteration}
-
-    # ask LLM to evaluate
-    search_memory = _merge_search_memory(state.get("search_memory"))
-    requirements = _normalize_requirements(
-        state.get("requirements_result"), _effective_question(task)
-    )
-    eval_input = f"""Task: {task}
-
-TASK_REQUIREMENTS (must not be abandoned during replan):
-{json.dumps(requirements.get('completion_criteria', []), ensure_ascii=False)}
-
-Completed steps ({len(completed)} total):
-{json.dumps([c['step'] for c in completed[-10:]], ensure_ascii=False)}
-
-Sources collected: {len(state.get('sources', []))}
-Queries attempted ({len(search_memory.get('attempted_queries', []))} total): {json.dumps(search_memory.get('attempted_queries', [])[-6:], ensure_ascii=False)}
-Pending generated queries: {json.dumps(search_memory.get('next_queries', [])[:4], ensure_ascii=False)}
-Open gaps: {json.dumps(search_memory.get('open_gaps', [])[:5], ensure_ascii=False)}
-
-Remaining plan ({len(plan)} steps):
-{json.dumps(plan[:8], ensure_ascii=False)}
-
-Summary of findings (last 2000 chars):
-{scratchpad[-2000:]}"""
-
-    print("  [EVAL] Assessing progress...", end=" ", flush=True)
-    eval_model = llm.model_for_role(model, "evaluate")
-    with trace.model_call("evaluate", eval_input, eval_model):
-        eval_content = llm._ollama_chat_schema(
-            eval_model,
-            [{"role": "user", "content": eval_input}],
-            system=profile.eval,
-            format_schema=EVAL_SCHEMA,
-        )
-    response = {"content": eval_content}
-    content = response.get("content", "{}")
-
-    decision = _json_loads_best_effort(
-        content, {"decision": "CONTINUE", "reason": "parse error"}
-    )
-
-    d = decision.get("decision", "CONTINUE").upper()
-    print(d)
-
-    if d == "REPLAN":
-        if profile.uses_search_memory:
-            # Build plan from search_memory instead of LLM new_plan:
-            # LLM decides WHETHER to replan; plan construction is deterministic
-            # to avoid malformed/duplicate queries from LLM free-form generation.
-            pending_queries = search_memory.get("next_queries", [])
-            attempted = {q.lower() for q in search_memory.get("attempted_queries", [])}
-            fresh_queries = [q for q in pending_queries if q.lower() not in attempted]
-            if not fresh_queries:
-                fresh_queries = [_effective_question(task)]
-            normalized = [f"web_search: {q}" for q in fresh_queries[:4]]
-            search_memory["next_queries"] = []
-            print(f"  [REPLAN] New plan: {len(normalized)} steps")
-            for i, s in enumerate(normalized, 1):
-                print(f"    {i}. {s[:100]}")
-            return {
-                "plan": normalized,
-                "replan_count": replan_count + 1,
-                "search_memory": search_memory,
-                "iteration": iteration,
-            }
-        # generic: one fresh free-form attempt at the task
-        normalized = [profile.fallback_step(_effective_question(task))]
-        print(f"  [REPLAN] New plan: {len(normalized)} steps")
-        return {
-            "plan": normalized,
-            "replan_count": replan_count + 1,
-            "iteration": iteration,
-        }
-
-    if d == "DONE":
-        return {"plan": [], "iteration": iteration}
-
-    return {"iteration": iteration}
-
-
-def route_after_execute(state: AgentState) -> str:
-    """Route after each execute step — update the evidence ledger when plan is exhausted."""
-    plan = state["plan"]
-    completed = state["completed_steps"]
-    if len(completed) >= MAX_PLAN_STEPS:
-        return "evidence_ledger"
-    if not plan:
-        return "evidence_ledger"
-    return "execute"
-
-
-def route_after_evidence_ledger(state: AgentState) -> str:
-    if state.get("evidence_audit", {}).get("dedup_stalled"):
-        return "evidence_reextract"
-    return "evidence_challenge"
-
-
-def route_after_evidence_reextract(state: AgentState) -> str:
-    audit = state.get("evidence_audit", {})
-    if audit and audit.get("passed"):
-        return "evidence_challenge"
-    if state.get("sources"):
-        return "answer"
-    return "assimilate"
-
-
-def route_after_evidence_challenge(state: AgentState) -> str:
-    audit = state.get("evidence_audit", {})
-    if audit.get("dedup_stalled"):
-        return "evidence_reextract"
-    if audit and audit.get("passed"):
-        return "answer"
-    verification = state.get("verification_result", {})
-    if (
-        verification.get("insufficient_evidence") is True
-        and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
-        and not state.get("plan")
-    ):
-        return "answer" if state.get("sources") else "assimilate"
-    if state.get("plan") and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS:
-        return "execute"
-    if (
-        state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
-        and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS
-        and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
-    ):
-        return "strategy"
-    # The search budget is exhausted. Supported ledger sources can still produce a
-    # useful, explicitly incomplete answer; only a run with no admissible evidence
-    # should terminate with the insufficient-evidence message alone.
-    return "answer" if state.get("sources") else "assimilate"
-
-
-def route_after_evaluate(state: AgentState) -> str:
-    plan = state["plan"]
-    completed = state["completed_steps"]
-
-    audit = state.get("evidence_audit", {})
-    if (
-        audit
-        and audit.get("passed") is False
-        and state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
-        and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
-    ):
-        return "strategy"
-
-    if not plan or len(completed) >= MAX_PLAN_STEPS:
-        return "answer"
-
-    return "execute"
-
-
-def route_after_plan(state: AgentState) -> str:
-    search_memory = _merge_search_memory(state.get("search_memory"))
-    if (
-        search_memory.get("search_exhausted")
-        and state.get("final_answer") == INSUFFICIENT_EVIDENCE_MESSAGE
-    ):
-        return "answer" if state.get("sources") else "assimilate"
-    if state["plan"]:
-        return "execute"
-    return "answer"
-
-
-def route_after_verify(state: AgentState) -> str:
-    final_answer = state.get("final_answer", "")
-    draft = (
-        state.get("draft_result", {})
-        if isinstance(state.get("draft_result"), dict)
-        else {}
-    )
-
-    has_real_answer = (
-        bool(final_answer) and final_answer != INSUFFICIENT_EVIDENCE_MESSAGE
-    )
-    draft_answer = draft.get("answer", "") if isinstance(draft, dict) else ""
-    has_valid_draft = (
-        bool(draft_answer)
-        and draft_answer != INSUFFICIENT_EVIDENCE_MESSAGE
-        and not draft.get("insufficient_evidence")
-        and bool(state.get("sources"))
-    )
-
-    if has_real_answer or has_valid_draft:
-        return "assimilate"
-
-    search_memory = _merge_search_memory(state.get("search_memory"))
-    if search_memory.get("search_exhausted"):
-        return "assimilate"
-
-    if not state.get("sources"):
-        if (
-            state.get("evidence_round", 0) <= MAX_EVIDENCE_ROUNDS
-            and len(state.get("completed_steps", [])) < MAX_PLAN_STEPS
-            and state.get("stagnant_rounds", 0) < MAX_STAGNANT_ROUNDS
-        ):
-            return "strategy"
-    return "assimilate"
-
 
 async def assimilate_node(state: AgentState, _model: str, _tools: list[dict]) -> dict:
     """Persist research experience — always, regardless of outcome."""
@@ -2094,7 +1450,7 @@ async def strategy_node(
     iteration = state["iteration"] + 1
     if not profile.uses_search_memory:
         # Generic mode has no web-search query space to evolve; plan_node replans from
-        # scratch using the reflection already recorded by evaluate_node.
+        # scratch using the evidence audit already recorded by the ledger/challenge.
         print("  [STRATEGY] Re-planning from scratch (generic mode)...")
         return {"iteration": iteration}
 
@@ -2238,364 +1594,3 @@ Propose the next search strategy."""
     ) < MAX_SEARCH_CALLS_PER_QUESTION:
         memory["search_exhausted"] = False
     return {"search_memory": memory, "iteration": iteration}
-
-
-async def answer_node(
-    state: AgentState, model: str, _tools: list[dict], profile: Profile
-) -> dict:
-    """Draft a source-grounded structured answer."""
-    question = _effective_question(state["task"])
-    requirements = _normalize_requirements(state.get("requirements_result"), question)
-    proof_requirements = _proof_requirements(requirements)
-    quality_preferences = list(requirements.get("quality_preferences", []))
-    sources_text, valid_source_ids = _format_sources_for_llm(
-        state.get("sources", []), question
-    )
-    audit = state.get("evidence_audit", {}) or {}
-    partial_answer = audit.get("passed") is False
-    evidence_gaps = [str(gap) for gap in audit.get("gaps", []) if str(gap).strip()]
-    iteration = state["iteration"] + 1
-
-    answer_kind = "partial answer" if partial_answer else "answer"
-    print(
-        f"\n  [ANSWER] Drafting {answer_kind} from {len(valid_source_ids)} sources..."
-    )
-    if not valid_source_ids:
-        draft = {
-            "answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "claims": [],
-            "coverage": {
-                "requirements_addressed": [],
-                "overall_status": "missing",
-            },
-            "insufficient_evidence": True,
-        }
-        return {
-            "draft_result": draft,
-            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "iteration": iteration,
-        }
-
-    prompt = f"""QUESTION:
-{question}
-
-PROOF_REQUIREMENTS:
-{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
-
-NON_BLOCKING_QUALITY_PREFERENCES:
-{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
-
-PARTIAL_ANSWER_MODE:
-{json.dumps(partial_answer)}
-
-KNOWN_EVIDENCE_GAPS:
-{json.dumps(evidence_gaps, ensure_ascii=False, indent=2)}
-
-SOURCES:
-{sources_text}
-
-Answer only from SOURCES. Use NON_BLOCKING_QUALITY_PREFERENCES only when supported.
-If PARTIAL_ANSWER_MODE is false, satisfy PROOF_REQUIREMENTS.
-If PARTIAL_ANSWER_MODE is true, give the most useful supported partial answer instead of refusing:
-- state clearly at the beginning that the answer is partial;
-- include every useful supported finding relevant to the question;
-- briefly identify the relevant KNOWN_EVIDENCE_GAPS;
-- never fill a gap with outside knowledge or an inference."""
-
-    # Prose-first: rich, reliable prose with inline [n] citations. A large structured
-    # JSON envelope is fragile on content-heavy answers, so we draft prose and verify
-    # the prose against the same bounded source set (see verify_node).
-    with trace.model_call("answer", prompt, model):
-        prose = (
-            llm._ollama_chat(
-                model,
-                [{"role": "user", "content": prompt}],
-                tools=None,
-                system=profile.answer_prose,
-            )
-            .get("content", "")
-            .strip()
-        )
-
-    if prose and prose != INSUFFICIENT_EVIDENCE_MESSAGE:
-        draft = {
-            "answer": prose,
-            "claims": [],
-            "coverage": {"requirements_addressed": [], "overall_status": "partial"},
-            "insufficient_evidence": False,
-            "salvaged_prose": True,
-        }
-    else:
-        draft = {
-            "answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "claims": [],
-            "coverage": {"requirements_addressed": [], "overall_status": "missing"},
-            "insufficient_evidence": True,
-        }
-
-    return {"draft_result": draft, "iteration": iteration}
-
-
-async def verify_node(
-    state: AgentState, model: str, _tools: list[dict], profile: Profile
-) -> dict:
-    """Verify the drafted answer against the same bounded source set."""
-    question = _effective_question(state["task"])
-    requirements = _normalize_requirements(state.get("requirements_result"), question)
-    proof_requirements = _proof_requirements(requirements)
-    quality_preferences = list(requirements.get("quality_preferences", []))
-    sources_text, valid_source_ids = _format_sources_for_llm(
-        state.get("sources", []), question
-    )
-    draft = state.get("draft_result", {})
-    audit = state.get("evidence_audit", {}) or {}
-    partial_answer = audit.get("passed") is False
-    evidence_gaps = [str(gap) for gap in audit.get("gaps", []) if str(gap).strip()]
-    iteration = state["iteration"] + 1
-
-    print("  [VERIFY] Checking claims against sources...")
-    if draft.get("salvaged_prose") is True and valid_source_ids:
-        # Prose answer → verify in prose: model re-checks every statement and inline
-        # citation against the bounded source set and returns a corrected prose answer.
-        # Prose-in/prose-out avoids the fragile JSON envelope while keeping real grounding.
-        print("  [VERIFY] Grounding prose answer against sources...")
-        verify_prompt = f"""PROOF_REQUIREMENTS:
-{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
-
-NON_BLOCKING_QUALITY_PREFERENCES:
-{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
-
-PARTIAL_ANSWER_MODE:
-{json.dumps(partial_answer)}
-
-KNOWN_EVIDENCE_GAPS:
-{json.dumps(evidence_gaps, ensure_ascii=False, indent=2)}
-
-SOURCES:
-{sources_text}
-
-DRAFT_ANSWER:
-{draft.get("answer", "")}
-
-Return the corrected, fully-grounded answer. In PARTIAL_ANSWER_MODE, preserve useful
-supported findings and the explicit partial-answer disclosure; do not reject the whole
-answer merely because KNOWN_EVIDENCE_GAPS remain."""
-        with trace.model_call("verify", verify_prompt, model):
-            verified = (
-                llm._ollama_chat(
-                    model,
-                    [{"role": "user", "content": verify_prompt}],
-                    tools=None,
-                    system=profile.verify_prose,
-                )
-                .get("content", "")
-                .strip()
-            )
-
-        # If verification produced nothing usable, fall back to the original prose draft
-        # rather than losing a grounded answer to a flaky verify call.
-        if not verified:
-            verified = draft.get("answer", "")
-        insufficient = (not verified) or verified == INSUFFICIENT_EVIDENCE_MESSAGE
-
-        # Small JSON verdict: a compact, machine-readable quality report about the prose
-        # answer. No answer text inside, so it parses reliably (unlike the old big envelope).
-        coverage_complete = True
-        missing: list[str] = []
-        verdict_notes: list[str] = []
-        if not insufficient:
-            verdict_prompt = f"""PROOF_REQUIREMENTS:
-{json.dumps(proof_requirements, ensure_ascii=False, indent=2)}
-
-NON_BLOCKING_QUALITY_PREFERENCES:
-{json.dumps(quality_preferences, ensure_ascii=False, indent=2)}
-
-SOURCES:
-{sources_text}
-
-FINAL_ANSWER:
-{verified}
-
-Return the compact JSON verdict."""
-            with trace.model_call("verify_verdict", verdict_prompt, model):
-                verdict_raw = llm._ollama_chat_schema(
-                    model,
-                    [{"role": "user", "content": verdict_prompt}],
-                    system=profile.verify_verdict,
-                    format_schema=VERIFY_VERDICT_SCHEMA,
-                )
-            verdict = _json_loads_best_effort(verdict_raw, {})
-            if isinstance(verdict, dict):
-                coverage_complete = bool(verdict.get("coverage_complete", True))
-                missing = [str(m) for m in verdict.get("missing", []) if m]
-                verdict_notes = [str(n) for n in verdict.get("notes", []) if n]
-            if missing:
-                print(f"  [VERIFY] Coverage gaps: {', '.join(missing[:4])}")
-
-        verification = {
-            "final_answer": verified,
-            "claim_checks": [],
-            "task_complete": (not insufficient) and coverage_complete,
-            "coverage": {
-                "overall_status": "complete" if coverage_complete else "partial"
-            },
-            "gaps": missing,
-            "notes": verdict_notes,
-            "insufficient_evidence": insufficient,
-        }
-        update = {
-            "verification_result": verification,
-            "final_answer": verified,
-            "iteration": iteration,
-        }
-        if insufficient:
-            update["evidence_round"] = state.get("evidence_round", 0) + 1
-        return update
-    if not valid_source_ids or draft.get("insufficient_evidence") is True:
-        next_round = state.get("evidence_round", 0) + 1
-        verification = {
-            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "claim_checks": [],
-            "task_complete": False,
-            "coverage": {
-                "requirements_addressed": [],
-                "overall_status": "missing",
-            },
-            "gaps": ["No source-backed draft answer is available."],
-            "insufficient_evidence": True,
-        }
-        return {
-            "verification_result": verification,
-            "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-            "evidence_round": next_round,
-            "iteration": iteration,
-        }
-
-    # Unreachable in normal flow: answer_node always produces either a salvaged_prose
-    # draft (handled above) or an insufficient_evidence draft (handled above). This is a
-    # safety net for any unexpected draft shape.
-    verification = {
-        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-        "task_complete": False,
-        "gaps": ["No usable answer draft."],
-        "insufficient_evidence": True,
-    }
-    return {
-        "verification_result": verification,
-        "final_answer": INSUFFICIENT_EVIDENCE_MESSAGE,
-        "evidence_round": state.get("evidence_round", 0) + 1,
-        "iteration": iteration,
-    }
-
-
-def build_graph(
-    model: str,
-    tools: list[dict],
-    mcp_session: ClientSession | None = None,
-    profile: Profile | None = None,
-):
-    profile = profile or FOOTNOTE_PROFILE
-    graph = StateGraph(AgentState)
-
-    async def _requirements(state):
-        return await requirements_node(state, model, tools, profile)
-
-    async def _plan(state):
-        return await plan_node(state, model, tools, profile)
-
-    async def _execute(state):
-        return await execute_node(state, model, tools, profile, mcp_session=mcp_session)
-
-    async def _evidence_ledger(state):
-        return await evidence_ledger_node(state, model, tools, profile)
-
-    async def _evidence_challenge(state):
-        return await evidence_challenge_node(state, model, tools, profile)
-
-    async def _evidence_reextract(state):
-        return await evidence_reextract_node(state, model, tools, profile)
-
-    async def _evaluate(state):
-        return await evaluate_node(state, model, tools, profile)
-
-    async def _answer(state):
-        return await answer_node(state, model, tools, profile)
-
-    async def _verify(state):
-        return await verify_node(state, model, tools, profile)
-
-    async def _strategy(state):
-        return await strategy_node(state, model, tools, profile)
-
-    async def _assimilate(state):
-        return await assimilate_node(state, model, tools)
-
-    graph.add_node("requirements", _requirements)
-    graph.add_node("plan", _plan)
-    graph.add_node("execute", _execute)
-    graph.add_node("evidence_ledger", _evidence_ledger)
-    graph.add_node("evidence_challenge", _evidence_challenge)
-    graph.add_node("evidence_reextract", _evidence_reextract)
-    graph.add_node("evaluate", _evaluate)
-    graph.add_node("answer", _answer)
-    graph.add_node("verify", _verify)
-    graph.add_node("strategy", _strategy)
-    graph.add_node("assimilate", _assimilate)
-
-    graph.set_entry_point("requirements")
-
-    graph.add_edge("requirements", "plan")
-    graph.add_conditional_edges(
-        "plan",
-        route_after_plan,
-        {"execute": "execute", "answer": "answer", "assimilate": "assimilate"},
-    )
-    graph.add_conditional_edges(
-        "execute",
-        route_after_execute,
-        {"execute": "execute", "evidence_ledger": "evidence_ledger"},
-    )
-    graph.add_conditional_edges(
-        "evidence_ledger",
-        route_after_evidence_ledger,
-        {
-            "evidence_challenge": "evidence_challenge",
-            "evidence_reextract": "evidence_reextract",
-        },
-    )
-    graph.add_conditional_edges(
-        "evidence_challenge",
-        route_after_evidence_challenge,
-        {
-            "execute": "execute",
-            "answer": "answer",
-            "strategy": "strategy",
-            "assimilate": "assimilate",
-            "evidence_reextract": "evidence_reextract",
-        },
-    )
-    graph.add_conditional_edges(
-        "evidence_reextract",
-        route_after_evidence_reextract,
-        {
-            "evidence_challenge": "evidence_challenge",
-            "answer": "answer",
-            "assimilate": "assimilate",
-        },
-    )
-    graph.add_conditional_edges(
-        "evaluate",
-        route_after_evaluate,
-        {"execute": "execute", "answer": "answer", "strategy": "strategy"},
-    )
-
-    graph.add_edge("answer", "verify")
-    graph.add_conditional_edges(
-        "verify",
-        route_after_verify,
-        {"strategy": "strategy", "assimilate": "assimilate"},
-    )
-    graph.add_edge("strategy", "plan")
-    graph.add_edge("assimilate", END)
-
-    return graph.compile()

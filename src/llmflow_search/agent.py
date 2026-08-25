@@ -6,8 +6,8 @@ through ``from llmflow_search import agent``. Everything else is imported from i
 submodule directly.
 """
 
+from .graph import build_graph
 from .mcp_client import load_mcp_tools
-from .nodes import build_graph, evaluate_node, route_after_evaluate
 from .observations import (
     _enrich_sources_with_observation,
     _fallback_observation,
@@ -31,8 +31,6 @@ from .tool_steps import _tool_call_from_step
 __all__ = [
     "load_mcp_tools",
     "build_graph",
-    "evaluate_node",
-    "route_after_evaluate",
     "_fallback_observation",
     "_enrich_sources_with_observation",
     "_normalize_observation",

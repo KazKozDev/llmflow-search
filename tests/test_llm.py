@@ -11,7 +11,7 @@ def test_model_picker_preserves_non_numeric_input_as_first_task(monkeypatch):
             SimpleNamespace(model="other-model", size=2 * 1024**3),
         ]
     )
-    monkeypatch.setattr(llm.ollama, "list", lambda: models)
+    monkeypatch.setattr(llm, "_ollama_client", lambda: SimpleNamespace(list=lambda: models))
     monkeypatch.setattr("builtins.input", lambda _prompt: "first user request")
 
     assert llm.pick_model() == "gemma4:26b-mlx"
@@ -28,7 +28,7 @@ def test_model_picker_asks_once_and_returns_one_model(monkeypatch):
         ]
     )
     prompts = []
-    monkeypatch.setattr(llm.ollama, "list", lambda: models)
+    monkeypatch.setattr(llm, "_ollama_client", lambda: SimpleNamespace(list=lambda: models))
 
     def _input(prompt):
         prompts.append(prompt)
@@ -49,7 +49,7 @@ def test_model_picker_enter_uses_default(monkeypatch):
             SimpleNamespace(model="tiny-model", size=1024**3),
         ]
     )
-    monkeypatch.setattr(llm.ollama, "list", lambda: models)
+    monkeypatch.setattr(llm, "_ollama_client", lambda: SimpleNamespace(list=lambda: models))
     monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
     assert llm.pick_model() == "gemma4:26b-mlx"

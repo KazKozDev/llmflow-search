@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -36,17 +37,11 @@ class RunTrace:
         self.run_id = run_id or uuid.uuid4().hex[:12]
         self._handle = self.path.open("a", encoding="utf-8")
         self._lock = threading.Lock()
-        self._fields: dict[str, Any] = {"query_id": None, "round": 0}
-
-    def bind(self, **fields: Any) -> None:
-        """Set the fields every later event carries (query_id, round)."""
-        self._fields.update(fields)
-
-    def emit(self, event: str, **payload: Any) -> None:
+    def emit(self, event: str, fields: dict[str, Any] | None = None, **payload: Any) -> None:
         record = {
             "ts": round(time.time(), 3),
             "run_id": self.run_id,
-            **self._fields,
+            **(fields or {}),
             "event": event,
             **payload,
         }
@@ -61,43 +56,49 @@ class RunTrace:
                 self._handle.close()
 
 
-_ACTIVE: RunTrace | None = None
+_TRACE_CONTEXT: ContextVar[tuple[RunTrace | None, dict[str, Any]]] = ContextVar(
+    "llmflow_search_trace", default=(None, {"query_id": None, "round": 0})
+)
 
 
 def start_run(path: str | os.PathLike | None, run_id: str = "") -> RunTrace | None:
     """Open a trace at ``path``, or return None when tracing is off."""
-    global _ACTIVE
     if not path:
         return None
-    _ACTIVE = RunTrace(path, run_id)
-    return _ACTIVE
+    previous, _fields = _TRACE_CONTEXT.get()
+    if previous is not None:
+        previous.close()
+    trace = RunTrace(path, run_id)
+    _TRACE_CONTEXT.set((trace, {"query_id": None, "round": 0}))
+    return trace
 
 
 def close_run() -> None:
-    global _ACTIVE
-    if _ACTIVE is not None:
-        _ACTIVE.close()
-        _ACTIVE = None
+    trace, _fields = _TRACE_CONTEXT.get()
+    if trace is not None:
+        trace.close()
+    _TRACE_CONTEXT.set((None, {"query_id": None, "round": 0}))
 
 
 def active() -> RunTrace | None:
-    return _ACTIVE
+    return _TRACE_CONTEXT.get()[0]
 
 
 def emit(event: str, **payload: Any) -> None:
     """Record one event, or do nothing when no trace is open."""
-    trace = _ACTIVE
+    trace, fields = _TRACE_CONTEXT.get()
     if trace is None:
         return
     try:
-        trace.emit(event, **payload)
+        trace.emit(event, fields=dict(fields), **payload)
     except Exception:  # a diagnostic channel must not be able to fail a run
         pass
 
 
 def bind(**fields: Any) -> None:
-    if _ACTIVE is not None:
-        _ACTIVE.bind(**fields)
+    trace, current = _TRACE_CONTEXT.get()
+    if trace is not None:
+        _TRACE_CONTEXT.set((trace, {**current, **fields}))
 
 
 def begin_query(query_id: str, **payload: Any) -> None:

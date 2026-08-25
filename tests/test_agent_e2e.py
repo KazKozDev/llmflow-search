@@ -7,6 +7,7 @@ from llmflow_search import agent as agent_module
 from llmflow_search import llm, mcp_client, memory
 from llmflow_search import nodes as nodes_module
 from llmflow_search.config import INSUFFICIENT_EVIDENCE_MESSAGE
+from llmflow_search.graph import build_graph
 from llmflow_search.nodes import (
     _normalize_evidence_ledger_result,
     evidence_ledger_node,
@@ -75,6 +76,7 @@ def test_agent_graph_completes_with_fake_model_and_fake_tool(monkeypatch):
                         "answer_ready": True,
                         "ledger": [
                             {
+                                "requirement_index": 0,
                                 "requirement": "rate value",
                                 "proposed_claim": "The sourced EUR/RUB rate is 90.1.",
                                 "source_ids": [1],
@@ -212,6 +214,7 @@ def test_evidence_challenge_can_force_another_tool_step(monkeypatch):
                         "answer_ready": True,
                         "ledger": [
                             {
+                                "requirement_index": 0,
                                 "requirement": "test fact",
                                 "proposed_claim": "The verified fact is 42.",
                                 "source_ids": [source_id],
@@ -384,6 +387,7 @@ def test_evidence_ledger_keeps_stable_claim_metadata():
             "ledger": [
                 {
                     "claim_id": "girona-event",
+                    "requirement_index": 0,
                     "requirement": "bounded news selection",
                     "proposed_claim": "The event happened in Girona.",
                     "event_date": "2026-06-30",
@@ -400,9 +404,10 @@ def test_evidence_ledger_keeps_stable_claim_metadata():
             ],
             "global_missing": [],
             "next_steps": [],
-        },
-        sources,
-    )
+            },
+            sources,
+            ["bounded news selection"],
+        )
 
     assert ledger["answer_ready"] is True
     assert ledger["supported_claim_count"] == 1
@@ -918,40 +923,6 @@ def test_observation_normalization_accepts_only_controller_tags():
     )
 
 
-def test_evidence_audit_blocks_plan_exhaustion_without_sources(monkeypatch):
-    # When the audit fails, evaluate_node asks the model to reflect; stub it out.
-    monkeypatch.setattr(llm, "_ollama_chat", lambda *a, **k: {"content": ""})
-    state = {
-        "task": "Find the requested fact",
-        "requirements_result": {
-            "target": "requested fact",
-            "required_coverage": "Provide the requested fact from fetched evidence.",
-            "completion_criteria": ["Provide one sourced answer."],
-        },
-        "plan": [],
-        "completed_steps": [],
-        "scratchpad": "",
-        "sources": [],
-        "draft_result": {},
-        "verification_result": {},
-        "evidence_audit": {},
-        "final_answer": "",
-        "iteration": 0,
-        "replan_count": 0,
-        "evidence_round": 0,
-        "search_memory": agent_module._default_search_memory(),
-    }
-
-    update = asyncio.run(
-        agent_module.evaluate_node(state, "fake", [], FOOTNOTE_PROFILE)
-    )
-    routed_state = state | update
-
-    assert update["evidence_audit"]["passed"] is False
-    assert update["verification_result"]["insufficient_evidence"] is True
-    assert agent_module.route_after_evaluate(routed_state) == "strategy"
-
-
 def test_evidence_audit_fails_when_ledger_has_no_supported_sources():
     state = {
         "task": "euro rate for everyday may 2026",
@@ -1193,6 +1164,7 @@ def test_generic_profile_runs_graph_against_a_foreign_tool(monkeypatch):
                         "answer_ready": True,
                         "ledger": [
                             {
+                                "requirement_index": 0,
                                 "requirement": "state the capital",
                                 "proposed_claim": "The capital of France is Paris.",
                                 "source_ids": [1],
@@ -1537,7 +1509,9 @@ def test_graph_can_route_failed_reextract_with_sources_to_partial_answer(monkeyp
     async def fake_plan(state, model, tools, profile):
         return {"plan": ["example_tool: request"], "iteration": state["iteration"] + 1}
 
-    async def fake_execute(state, model, tools, profile, mcp_session=None):
+    async def fake_execute(
+        state, model, tools, profile, mcp_session=None, tool_authorizer=None
+    ):
         return {
             "plan": [],
             "completed_steps": [
@@ -1602,7 +1576,7 @@ def test_graph_can_route_failed_reextract_with_sources_to_partial_answer(monkeyp
     monkeypatch.setattr(nodes_module, "verify_node", fake_verify)
     monkeypatch.setattr(nodes_module, "assimilate_node", fake_assimilate)
 
-    graph = nodes_module.build_graph("fake-model", tools=[])
+    graph = build_graph("fake-model", tools=[])
     state = {
         "task": "Return every requested item",
         "conversation_context": "",

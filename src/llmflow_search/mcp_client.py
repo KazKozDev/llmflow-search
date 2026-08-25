@@ -11,6 +11,7 @@ from mcp.client.stdio import stdio_client
 
 from . import trace
 from .config import (
+    MCP_TIMEOUT_SECONDS,
     SEARCH_DELAY_JITTER,
     SEARCH_GROUP_DELAY_SECONDS,
     SERVER_CMD,
@@ -142,39 +143,130 @@ def _format_tool_catalog(tools: list[dict]) -> str:
     return "\n".join(lines) or "(no MCP tools available)"
 
 
+def _compact_json_value(
+    value, *, depth: int = 0, max_string_chars: int = 12000, max_items: int = 100
+):
+    """Bound untrusted structured output without corrupting its JSON container."""
+    if depth >= 8:
+        return "[nested value omitted]"
+    if isinstance(value, str):
+        return value[:max_string_chars]
+    if isinstance(value, list):
+        return [
+            _compact_json_value(
+                item,
+                depth=depth + 1,
+                max_string_chars=max_string_chars,
+                max_items=max_items,
+            )
+            for item in value[:max_items]
+        ]
+    if isinstance(value, dict):
+        return {
+            str(key)[:200]: _compact_json_value(
+                item,
+                depth=depth + 1,
+                max_string_chars=max_string_chars,
+                max_items=max_items,
+            )
+            for key, item in list(value.items())[:max_items]
+        }
+    return value
+
+
+def _bounded_content_text(text: str) -> str:
+    """Clip prose directly, but parse/compact JSON before applying the wire limit."""
+    try:
+        value = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return str(text)[:TOOL_RESULT_MAX_CHARS]
+    # Tighten field and array budgets together until the original top-level container
+    # fits. This preserves whether the server returned an object or an array.
+    for max_string_chars, max_items in (
+        (12000, 100),
+        (6000, 50),
+        (3000, 25),
+        (1500, 12),
+        (750, 6),
+        (300, 3),
+        (100, 1),
+    ):
+        compact = _compact_json_value(
+            value, max_string_chars=max_string_chars, max_items=max_items
+        )
+        encoded = json.dumps(compact, ensure_ascii=False, default=str)
+        if len(encoded) <= TOOL_RESULT_MAX_CHARS:
+            return encoded
+    # Pathological key-only objects can exceed the budget even with one field retained.
+    return json.dumps(
+        {"truncated": True, "preview": str(value)[:4000]}, ensure_ascii=False
+    )
+
+
 def _mcp_result_text(result) -> str:
     """Preserve text, embedded text resources, and structured MCP output."""
     parts: list[str] = []
     for content in getattr(result, "content", []) or []:
         text = getattr(content, "text", None)
         if isinstance(text, str) and text:
-            parts.append(text)
+            parts.append(_bounded_content_text(text))
             continue
         resource = getattr(content, "resource", None)
         resource_text = getattr(resource, "text", None)
         if isinstance(resource_text, str) and resource_text:
-            parts.append(resource_text)
+            parts.append(_bounded_content_text(resource_text))
 
     structured = getattr(result, "structuredContent", None)
     if structured is None:
         structured = getattr(result, "structured_content", None)
     if structured is not None:
-        structured_text = json.dumps(structured, ensure_ascii=False, default=str)
+        structured_text = _bounded_content_text(
+            json.dumps(structured, ensure_ascii=False, default=str)
+        )
         if structured_text and structured_text not in parts:
             parts.append(structured_text)
 
-    text = "\n".join(parts).strip()
+    if len(parts) == 1:
+        text = parts[0].strip()
+    elif parts:
+        decoded_parts = []
+        for part in parts:
+            try:
+                decoded_parts.append(json.loads(part))
+            except json.JSONDecodeError:
+                decoded_parts = []
+                break
+        if decoded_parts:
+            # Multiple structured content blocks are one structured MCP result. Keep the
+            # aggregate valid JSON too, instead of joining objects and slicing bytes.
+            text = _bounded_content_text(
+                json.dumps(decoded_parts, ensure_ascii=False, default=str)
+            )
+        else:
+            kept: list[str] = []
+            used = 0
+            for part in parts:
+                separator = 1 if kept else 0
+                if used + separator + len(part) > TOOL_RESULT_MAX_CHARS:
+                    break
+                kept.append(part)
+                used += separator + len(part)
+            text = "\n".join(kept).strip()
+    else:
+        text = ""
     if getattr(result, "isError", False) or getattr(result, "is_error", False):
         raise RuntimeError(text or "MCP tool reported an error")
-    return text[:TOOL_RESULT_MAX_CHARS]
+    return text
 
 
 async def load_mcp_tools() -> list[dict]:
     params = StdioServerParameters(command=SERVER_CMD[0], args=SERVER_CMD[1:])
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.list_tools()
+            await asyncio.wait_for(session.initialize(), timeout=MCP_TIMEOUT_SECONDS)
+            result = await asyncio.wait_for(
+                session.list_tools(), timeout=MCP_TIMEOUT_SECONDS
+            )
             return _tool_schema_list(result)
 
 
@@ -189,12 +281,16 @@ async def _call_mcp_tool(
         await _wait_for_search_request_slot(name)
 
     if session is not None:
-        result = await session.call_tool(name, args)
+        result = await asyncio.wait_for(
+            session.call_tool(name, args), timeout=MCP_TIMEOUT_SECONDS
+        )
         return _mcp_result_text(result)
 
     params = StdioServerParameters(command=SERVER_CMD[0], args=SERVER_CMD[1:])
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(name, args)
+            await asyncio.wait_for(session.initialize(), timeout=MCP_TIMEOUT_SECONDS)
+            result = await asyncio.wait_for(
+                session.call_tool(name, args), timeout=MCP_TIMEOUT_SECONDS
+            )
             return _mcp_result_text(result)

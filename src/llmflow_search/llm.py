@@ -6,10 +6,15 @@ import sys
 
 import ollama
 
-from .config import FAST_MODEL, FAST_MODEL_ROLES
+from .config import FAST_MODEL, FAST_MODEL_ROLES, OLLAMA_TIMEOUT_SECONDS
 from .console import print
 
 _PENDING_INITIAL_TASK = ""
+
+
+def _ollama_client() -> ollama.Client:
+    """A transport with a finite HTTP deadline for every list/chat request."""
+    return ollama.Client(timeout=OLLAMA_TIMEOUT_SECONDS)
 
 
 def pop_pending_initial_task() -> str:
@@ -21,7 +26,7 @@ def pop_pending_initial_task() -> str:
 
 def pick_model() -> str:
     try:
-        models = ollama.list()
+        models = _ollama_client().list()
     except Exception as e:
         print(f"[!] ollama not reachable: {e}")
         sys.exit(1)
@@ -71,7 +76,9 @@ def _available_models() -> list[str]:
     global _AVAILABLE_MODELS_CACHE
     if _AVAILABLE_MODELS_CACHE is None:
         try:
-            _AVAILABLE_MODELS_CACHE = [m.model or "" for m in ollama.list().models]
+            _AVAILABLE_MODELS_CACHE = [
+                m.model or "" for m in _ollama_client().list().models
+            ]
         except Exception:
             _AVAILABLE_MODELS_CACHE = []
     return _AVAILABLE_MODELS_CACHE
@@ -176,7 +183,7 @@ def _ollama_chat(
         kwargs["format"] = format_schema
     elif json_mode and not tools:
         kwargs["format"] = "json"
-    response = ollama.chat(**kwargs)
+    response = _ollama_client().chat(**kwargs)
     msg = response["message"]
 
     if msg.get("tool_calls"):

@@ -1,19 +1,33 @@
 """Interactive entry point (REPL) that wires the graph to a live MCP session."""
 
+import asyncio
+import json
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .config import SERVER_CMD
+from .config import MCP_TIMEOUT_SECONDS, SERVER_CMD
 from .console import print
+from .graph import build_graph
 from .llm import pick_model, pop_pending_initial_task
 from .mcp_client import _tool_schema_list
-from .nodes import build_graph
 from .profiles import select_profile
 from .reports import _write_debug_report, _write_pdf_report
 from .search_memory import _default_search_memory
 from .state import AgentState
+from .tool_policy import ToolEffect
+
+
+async def _confirm_tool_action(name: str, args: dict, effect: ToolEffect) -> bool:
+    """Ask at the last responsible moment before a state-changing MCP call."""
+    preview = json.dumps(args, ensure_ascii=False, default=str)[:500]
+    prompt = f"\n[authorization] Allow {effect.value} tool {name} with {preview}? [y/N] "
+    try:
+        answer = await asyncio.to_thread(input, prompt)
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in {"y", "yes"}
 
 
 async def main():
@@ -24,8 +38,14 @@ async def main():
     try:
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
-                tools = _tool_schema_list(await session.list_tools())
+                await asyncio.wait_for(
+                    session.initialize(), timeout=MCP_TIMEOUT_SECONDS
+                )
+                tools = _tool_schema_list(
+                    await asyncio.wait_for(
+                        session.list_tools(), timeout=MCP_TIMEOUT_SECONDS
+                    )
+                )
                 print(f"✓ ({len(tools)} tools)")
 
                 if not tools:
@@ -34,7 +54,13 @@ async def main():
 
                 profile = select_profile(t["function"]["name"] for t in tools)
                 print(f"  Profile: {profile.name}")
-                graph = build_graph(model, tools, mcp_session=session, profile=profile)
+                graph = build_graph(
+                    model,
+                    tools,
+                    mcp_session=session,
+                    profile=profile,
+                    tool_authorizer=_confirm_tool_action,
+                )
                 history: list[dict] = []  # conversation memory
 
                 print(f"\n{'='*50}")
@@ -85,7 +111,6 @@ async def main():
                         "constraint_registry": [],
                         "final_answer": "",
                         "iteration": 0,
-                        "replan_count": 0,
                         "evidence_round": 0,
                         "search_memory": _default_search_memory(),
                         "answer_mode": "strict",
@@ -95,6 +120,10 @@ async def main():
 
                     try:
                         final = await graph.ainvoke(state, {"recursion_limit": 200})
+                    except TimeoutError:
+                        # Leave both MCP context managers. The SDK's stdio transport then
+                        # performs graceful close and forced process-tree termination.
+                        raise
                     except Exception as e:
                         print(f"\n[!] Error: {e}")
                         continue

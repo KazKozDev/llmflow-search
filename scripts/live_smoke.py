@@ -31,7 +31,6 @@ async def main():
         "verification_result": {},
         "final_answer": "",
         "iteration": 0,
-        "replan_count": 0,
         "evidence_round": 0,
         "search_memory": _default_search_memory(),
     }

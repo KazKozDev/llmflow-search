@@ -20,8 +20,8 @@ from mcp.client.stdio import stdio_client
 
 # Import LLMFlow-Search graph components
 from llmflow_search import trace
+from llmflow_search.graph import build_graph
 from llmflow_search.mcp_client import _tool_schema_list
-from llmflow_search.nodes import build_graph
 from llmflow_search.profiles import select_profile
 from llmflow_search.search_memory import _default_search_memory
 from llmflow_search.sources import _normalize_source_url
@@ -212,7 +212,6 @@ async def run_single_query(
                     "evidence_audit": {},
                     "final_answer": "",
                     "iteration": 0,
-                    "replan_count": 0,
                     "evidence_round": 0,
                     "search_memory": _default_search_memory(),
                     "answer_mode": "strict",

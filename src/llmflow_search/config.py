@@ -25,6 +25,18 @@ def _non_negative_float_env(name: str, default: float) -> float:
         return default
 
 
+def _positive_float_env(name: str, default: float) -> float:
+    value = _non_negative_float_env(name, default)
+    return value if value > 0 else default
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default)) or default))
+    except ValueError:
+        return default
+
+
 SEARCH_REQUEST_DELAY_SECONDS = _non_negative_float_env(
     "LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS",
     12.0,
@@ -55,22 +67,30 @@ SEARCH_DELAY_JITTER = _non_negative_float_env("LLMFLOW_SEARCH_SEARCH_JITTER", 0.
 
 # Throttled steps executed in one batch before the rest are deferred to the next
 # round. A plan that queues six searches should not empty the whole queue at once.
-MAX_THROTTLED_STEPS_PER_BATCH = int(
-    os.getenv("LLMFLOW_SEARCH_MAX_SEARCH_BATCH", "2") or 2
+MAX_THROTTLED_STEPS_PER_BATCH = _positive_int_env(
+    "LLMFLOW_SEARCH_MAX_SEARCH_BATCH", 2
 )
 
 
 # Hard ceiling on rate-limited calls spent answering one question. Keyed providers bill
 # per call and free tiers are small, so a question that keeps re-searching without
 # finding sources must stop rather than drain the month's quota.
-MAX_SEARCH_CALLS_PER_QUESTION = int(
-    os.getenv("LLMFLOW_SEARCH_MAX_SEARCH_CALLS", "12") or 12
+MAX_SEARCH_CALLS_PER_QUESTION = _positive_int_env(
+    "LLMFLOW_SEARCH_MAX_SEARCH_CALLS", 12
 )
 
 
 # Pages fetched at once. Reading is not metered, but twelve sites in one second is a
 # burst that individual hosts notice even though no single one is being hammered.
-MAX_PARALLEL_FETCHES = int(os.getenv("LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES", "5") or 5)
+MAX_PARALLEL_FETCHES = _positive_int_env("LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES", 5)
+
+# Network/model deadlines are deliberately finite. Graph recursion limits only bound
+# completed node transitions; they cannot interrupt a hung subprocess, HTTP request, or
+# MCP ``call_tool`` await.
+MCP_TIMEOUT_SECONDS = _positive_float_env("LLMFLOW_SEARCH_MCP_TIMEOUT_SECONDS", 120.0)
+OLLAMA_TIMEOUT_SECONDS = _positive_float_env(
+    "LLMFLOW_SEARCH_OLLAMA_TIMEOUT_SECONDS", 300.0
+)
 
 
 def group_batch_cap(group: str) -> int:

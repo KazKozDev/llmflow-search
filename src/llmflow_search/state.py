@@ -24,7 +24,6 @@ class AgentState(TypedDict):
     constraint_registry: list[dict]
     final_answer: str
     iteration: int
-    replan_count: int  # ponytail: hard cap at 3 replans. upgrade: configurable limit when agent gets stuck on legitimate multi-step tasks.
     evidence_round: int  # additional search rounds after insufficient evidence
     search_memory: dict
     answer_mode: str  # "strict" | "roundup" — decided once by requirements_node, stable across replans

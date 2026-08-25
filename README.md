@@ -87,6 +87,8 @@ question → conditions → plan → MCP tools → evidence → challenge → an
 | `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `12.0` | Delays scraped search calls |
 | `LLMFLOW_SEARCH_MAX_SEARCH_CALLS` | `12` | Caps rate-limited calls per question |
 | `LLMFLOW_SEARCH_MAX_PARALLEL_FETCHES` | `5` | Caps concurrent page fetches per round |
+| `LLMFLOW_SEARCH_MCP_TIMEOUT_SECONDS` | `120` | Bounds each MCP initialize/list/call operation |
+| `LLMFLOW_SEARCH_OLLAMA_TIMEOUT_SECONDS` | `300` | Bounds Ollama HTTP requests |
 | `LLMFLOW_SEARCH_REPORTS_DIR` | `reports` | Sets the verified PDF output directory |
 | `LLMFLOW_SEARCH_REPORT_LOGO` | Packaged logo | Sets the PDF logo; empty disables it |
 | `LLMFLOW_SEARCH_DEBUG_REPORTS` | `0` | Writes a JSON debug report when set to `1` |
@@ -107,6 +109,7 @@ question → conditions → plan → MCP tools → evidence → challenge → an
 - No launcher script is covered by CI; the one job runs lint, types, and tests on macOS.
 - Passage relevance is approximate: pages use overlapping 700-character windows.
 - Research stops after 40 plan steps, 5 evidence rounds, or 2 stagnant rounds.
+- Generic MCP tools that may write, publish, run, or delete require interactive approval.
 - No Docker image or PyPI package is published.
 
 <details>
