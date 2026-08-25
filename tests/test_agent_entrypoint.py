@@ -13,6 +13,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 def test_agent_script_entrypoint_can_import_project_modules():
     env = os.environ.copy()
     env["OLLAMA_HOST"] = "http://127.0.0.1:1"
+    env["LLMFLOW_SEARCH_MCP_CMD"] = f"{sys.executable} scripts/stub_mcp_server.py"
     env["PYTHONPATH"] = os.pathsep.join([str(SRC), env.get("PYTHONPATH", "")]).rstrip(
         os.pathsep
     )
