@@ -12,8 +12,6 @@ git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search &
 
 Local Ollama · Cited web answers · MIT licensed
 
-![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff)
-
 ## Quick start
 
 With Git and Ollama installed, clone the source, pull a model, and launch:
@@ -125,7 +123,7 @@ Run `uv run ruff check src tests scripts && uv run pyright && uv run pytest test
 
 <div align="center">
 
-[![CI](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg)](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![macOS](https://img.shields.io/badge/macOS-333?style=flat-square&logo=apple&logoColor=fff) [![CI](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml/badge.svg)](https://github.com/KazKozDev/llmflow-search/actions/workflows/ci.yml) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [Issues](https://github.com/KazKozDev/llmflow-search/issues) · [License](LICENSE) · [Configuration](docs/configuration.md) · [LinkedIn](https://www.linkedin.com/in/kazkozdev/)
 
