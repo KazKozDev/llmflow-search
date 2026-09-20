@@ -21,23 +21,46 @@ QUESTION="${1:-what did the Python 3.13 release add for free-threading}"
 MODEL="${LLMFLOW_SEARCH_MODEL:-deepseek-v4.1-flash:cloud}"
 CAST="docs/demo/session.cast"
 GIF="assets/llmflow-search-demo.gif"
+DONE_MARKER="Type next question or 'exit'"
 
-# Keys live in .env and must not reach the recording. Nothing below prints the
-# environment, and the finished cast is grepped for the key before it is rendered.
-if [[ -f .env ]]; then set -a; source .env; set +a; fi
+# Names of everything .env defines, so the scan below covers whatever this machine holds
+# rather than three names someone thought of once. A custom MCP command may need a token
+# nobody here has heard of.
+secret_names=()
+if [[ -f .env ]]; then
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && secret_names+=("$name")
+  done < <(grep -oE '^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' .env \
+           | sed -E 's/^[[:space:]]*(export[[:space:]]+)?//; s/[[:space:]]*=$//')
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 export LLMFLOW_SEARCH_MODEL="$MODEL"
 export PATH="$PWD/.venv/bin:$PATH"
+# Passed in the environment, not built into a command string: a question with an
+# apostrophe would end the quoting, and one with a semicolon would end the command.
+export DEMO_QUESTION="$QUESTION"
 
 echo "Recording a live session with $MODEL..."
-asciinema rec --window-size 100x30 --overwrite \
-  -c "docs/demo/type_question.exp '$QUESTION'" "$CAST"
+asciinema rec --window-size 100x30 --overwrite -c "docs/demo/type_question.exp" "$CAST"
+
+# asciinema writes a cast whatever the session did, and the renderer reads nothing but
+# the cast. Without this, a run that timed out or crashed becomes the published demo.
+if ! grep -qF -- "$DONE_MARKER" "$CAST"; then
+  echo "REFUSING TO RENDER: the session never finished — $CAST has no answer in it" >&2
+  exit 1
+fi
 
 # A secret in a GIF cannot be taken back once it is committed, so this check is not
-# optional and not advisory: it stops the pipeline.
-for var in TAVILY_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY; do
-  value="${!var:-}"
-  if [[ -n "$value" ]] && grep -qF -- "$value" "$CAST"; then
-    echo "REFUSING TO RENDER: $var appears in $CAST" >&2
+# optional and not advisory: it stops the pipeline. Short values are skipped because a
+# two-character setting matches everything and would only teach people to ignore this.
+for name in "${secret_names[@]}"; do
+  value="${!name:-}"
+  if [[ ${#value} -ge 8 ]] && grep -qF -- "$value" "$CAST"; then
+    echo "REFUSING TO RENDER: the value of $name appears in $CAST" >&2
     exit 1
   fi
 done
