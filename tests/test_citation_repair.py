@@ -111,3 +111,13 @@ def test_the_repair_can_be_turned_off(monkeypatch, fake_model):
         == original
     )
     assert calls == []
+
+
+def test_a_repair_that_returns_a_refusal_is_rejected(fake_model):
+    """Length and improved coverage cannot tell a repaired answer from a capitulation:
+    a refusal carries no claim sentences, so its coverage scores a perfect 1.0."""
+    from llmflow_search.config import INSUFFICIENT_EVIDENCE_MESSAGE
+
+    fake_model(INSUFFICIENT_EVIDENCE_MESSAGE)
+    answer = "It shipped in October [1]. The next release is unscheduled."
+    assert answering._repair_citations(answer, SOURCES, "m", FOOTNOTE_PROFILE) == answer

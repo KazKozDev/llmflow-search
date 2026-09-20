@@ -121,7 +121,12 @@ Return the ANSWER with each listed sentence either cited or removed."""
 
     repaired_coverage, _ = _citation_coverage(repaired)
     long_enough = len(repaired) >= CITATION_REPAIR_MIN_KEPT * len(answer)
-    accepted = bool(repaired) and long_enough and repaired_coverage > coverage
+    accepted = (
+        bool(repaired)
+        and not attribution.is_refusal(repaired)
+        and long_enough
+        and repaired_coverage > coverage
+    )
     trace.emit(
         "citation_repair",
         coverage_before=round(coverage, 3),
@@ -388,6 +393,23 @@ answer merely because KNOWN_EVIDENCE_GAPS remain."""
             verified = INSUFFICIENT_EVIDENCE_MESSAGE
         insufficient = (not verified) or verified == INSUFFICIENT_EVIDENCE_MESSAGE
 
+        # Repairs before the verdict, because the verdict is what becomes task_complete
+        # and it has to describe the text that ships. Run the other way round, a repair
+        # that deletes a required sentence leaves a completion verdict behind it that was
+        # true of an answer nobody will read.
+        #
+        # Structure first, citations second: a structure repair deletes and rewrites
+        # sentences, and a sentence it introduces needs the citation pass after it, not
+        # before.
+        structure_defects: list[str] = []
+        if not insufficient:
+            verified, structure_defects = _repair_structure(
+                verified, sources_text, model, profile, state.get("sources")
+            )
+            verified = _repair_citations(verified, sources_text, model, profile)
+            insufficient = attribution.is_refusal(verified)
+        citation_coverage, _uncited = _citation_coverage(verified)
+
         # Small JSON verdict: a compact, machine-readable quality report about the prose
         # answer. No answer text inside, so it parses reliably (unlike the old big envelope).
         coverage_complete = False
@@ -435,17 +457,6 @@ Return the compact JSON verdict."""
                 verdict_notes = ["The answer was not marked complete."]
             if missing:
                 print(f"  [VERIFY] Coverage gaps: {', '.join(missing[:4])}")
-
-        structure_defects: list[str] = []
-        if not insufficient:
-            # Structure first, citations second: a structure repair deletes and rewrites
-            # sentences, and a sentence it introduces needs the citation pass after it,
-            # not before.
-            verified, structure_defects = _repair_structure(
-                verified, sources_text, model, profile, state.get("sources")
-            )
-            verified = _repair_citations(verified, sources_text, model, profile)
-        citation_coverage, _uncited = _citation_coverage(verified)
 
         verification = {
             "final_answer": verified,

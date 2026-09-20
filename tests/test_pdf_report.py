@@ -250,3 +250,19 @@ def test_a_report_with_no_citations_still_lists_its_sources():
 
     assert "3 sources" in report
     assert "vendor.example" in report
+
+
+def test_a_date_shaped_string_that_is_not_a_date_is_treated_as_undated():
+    """`published` is whatever the page declared. "2026-02-30" has the shape and not the
+    day, and parsing it took a finished run down while it was writing its report."""
+    assert reports_module._source_date({"published": "2026-02-30"}) == ""
+    assert reports_module._source_date({"published": "2026-13-01"}) == ""
+    assert reports_module._source_date({"published": "2026-03-04"}) == "2026-03-04"
+
+
+def test_an_impossible_date_does_not_break_the_window():
+    window = reports_module._evidence_window(
+        [{"published": "2026-02-30"}, {"published": "2026-03-04"}]
+    )
+    assert "2026-03-04" in window
+    assert "1 undated" in window

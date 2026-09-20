@@ -143,12 +143,21 @@ _ISO_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 def _source_date(source: dict) -> str:
     """The source's publication date as ISO, or "" when it carries none.
 
-    Only a full ISO date is accepted. A half-parsed date is worse than no date: the
-    evidence window printed in the header is the reader's only check on whether figures
-    from different months were mixed, and a window built from guesses cannot be checked.
+    Only a full ISO date is accepted, and only one the calendar admits. The shape is not
+    enough: "published" comes from whatever the page declared, so "2026-02-30" reaches
+    here looking exactly like a date, and a window built on it took a finished run down
+    with a ValueError while writing its report. A half-parsed date is worse than no date
+    anyway — the window is the reader's only check on whether figures from different
+    months were mixed, and a window built from guesses cannot be checked.
     """
     match = _ISO_DATE.search(str(source.get("published") or ""))
-    return match.group(1) if match else ""
+    if not match:
+        return ""
+    try:
+        datetime.strptime(match.group(1), "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return match.group(1)
 
 
 def _source_type(source: dict) -> str:

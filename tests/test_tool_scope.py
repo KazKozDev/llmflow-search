@@ -112,3 +112,12 @@ def test_an_unattended_policy_can_be_widened_deliberately():
     )
     assert authorize("tool_code_run_sandboxed", {}, ToolEffect.EXTERNAL_WRITE) is True
     assert authorize("anything_delete", {}, ToolEffect.DESTRUCTIVE) is False
+
+
+def test_the_benchmark_starts_its_answers_file_empty():
+    """Appending to a previous run's sidecar makes the scorer read two experiments as
+    one, and nothing in the output says so."""
+    import pathlib
+
+    source = pathlib.Path("scripts/benchmark_browsecomp.py").read_text()
+    assert "answers_path.unlink()" in source

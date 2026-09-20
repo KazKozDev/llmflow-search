@@ -2606,3 +2606,18 @@ def test_a_specific_question_still_finds_its_passage():
     excerpt = relevant_excerpt(page, "When was the observatory commissioned?", 2000)
 
     assert "commissioned in 1886" in excerpt
+
+
+def test_the_completion_verdict_describes_the_text_that_ships():
+    """The verdict becomes task_complete, so it has to judge the repaired answer.
+
+    Run before the repair passes, it could certify an answer that the repairs then cut a
+    required sentence out of — a completion verdict true of a text nobody will read.
+    """
+    import inspect
+
+    from llmflow_search import answering
+
+    source = inspect.getsource(answering.verify_node)
+    assert source.index("_repair_structure(") < source.index("verify_verdict")
+    assert source.index("_repair_citations(") < source.index("verify_verdict")

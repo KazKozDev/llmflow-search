@@ -349,6 +349,13 @@ async def main_async():
     )
     trace.start_run(trace_path)
     answers_path = eval_records.sidecar_path(trace_path)
+    # The sidecar is appended to, one line per answered question, so a rerun against the
+    # same trace path would leave the previous run's answers underneath this one's. The
+    # scorer and compare_runs.py read the whole file and cannot tell the two apart: the
+    # measurement would silently describe a mixture of two experiments. Start it empty.
+    if answers_path.exists():
+        print(f"Replacing previous answers at {answers_path}")
+        answers_path.unlink()
     print(f"Run trace: {trace_path}")
     print(f"Answers:   {answers_path}")
 
