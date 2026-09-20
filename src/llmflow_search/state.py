@@ -18,6 +18,10 @@ class AgentState(TypedDict):
     draft_result: dict  # structured answer before verification
     verification_result: dict
     evidence_audit: dict
+    # Objections that blocked this run once, under a usable requirement index. A later
+    # round that raises the same objection without an index is not inventing it — see
+    # evidence._recurring_gap.
+    enforced_gaps: list[str]
     # One entry per condition the question sets, with its status, the pages that settled
     # it and the claim they support. A projection of the evidence ledger — see
     # constraints.py — so it cannot disagree with the ledger it is read from.

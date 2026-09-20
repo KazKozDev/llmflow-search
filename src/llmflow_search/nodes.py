@@ -429,6 +429,46 @@ def _emit_evidence_admitted(
     )
 
 
+# Enough history to recognise a returning objection, bounded so a long run cannot grow
+# the state without limit. Objections repeat; they do not accumulate indefinitely.
+_MAX_ENFORCED_GAPS = 40
+
+
+def _remember_enforced_gaps(state: dict, blocked: list[str]) -> list[str]:
+    """Add this round's indexed objections to the ones the run has already enforced."""
+    remembered = [str(gap) for gap in (state.get("enforced_gaps") or []) if str(gap)]
+    for gap in blocked:
+        text = str(gap).strip()
+        if text and text not in remembered:
+            remembered.append(text)
+    return remembered[-_MAX_ENFORCED_GAPS:]
+
+
+def _emit_dropped_gaps(node: str, result: dict) -> None:
+    """Report the objections this node discarded for naming no requirement.
+
+    Printed since the behaviour existed, recorded nowhere — so how often a real objection
+    is lost to a missing index could not be counted, and neither could the effect of
+    anything done about it. The node is named because the two gates fail differently: the
+    ledger discards while assembling evidence, the challenge while re-reading it.
+    """
+    dropped = [str(gap) for gap in (result.get("dropped_gaps") or []) if str(gap)]
+    recovered = [str(gap) for gap in (result.get("recovered_gaps") or []) if str(gap)]
+    if dropped:
+        print(f"    dropped (no matching requirement): {', '.join(dropped[:4])}")
+    if recovered:
+        print(f"    re-blocked (blocked before, index lost): {', '.join(recovered[:4])}")
+    if dropped or recovered:
+        trace.emit(
+            "gap_index_lost",
+            node=node,
+            dropped=dropped[:8],
+            dropped_count=len(dropped),
+            recovered=recovered[:8],
+            recovered_count=len(recovered),
+        )
+
+
 def _emit_search_results(tool_name: str, args: dict, tool_result: str) -> None:
     """Record what a discovery call returned, in rank order, with its snippets.
 
@@ -1083,6 +1123,8 @@ Build the evidence ledger and choose next tool steps if proof is still missing."
         completion_criteria,
         answer_mode,
         valid_source_ids,
+        requirements.get("identifying_criteria"),
+        state.get("enforced_gaps"),
     )
     admitted = ledger_result["admissible_sources"]
     _emit_evidence_admitted(candidate_sources, admitted, ledger_result)
@@ -1102,10 +1144,7 @@ Build the evidence ledger and choose next tool steps if proof is still missing."
     )
     if gaps:
         print(f"    gaps: {', '.join(gaps[:4])}")
-    if ledger_result.get("dropped_gaps"):
-        print(
-            f"    dropped (no matching requirement): {', '.join(ledger_result['dropped_gaps'][:4])}"
-        )
+    _emit_dropped_gaps("evidence_ledger", ledger_result)
     if next_steps:
         print(f"    next: {next_steps[0][:100]}")
 
@@ -1140,6 +1179,9 @@ Build the evidence ledger and choose next tool steps if proof is still missing."
         "iteration": iteration,
         "stagnant_rounds": stagnant_rounds,
         "last_supported_claim_count": current_supported,
+        "enforced_gaps": _remember_enforced_gaps(
+            state, list(ledger_result.get("global_missing", []))
+        ),
     }
     if ledger_result["answer_ready"]:
         update["plan"] = []
@@ -1249,7 +1291,11 @@ Challenge the ledger and decide whether a final answer is permitted."""
             format_schema=_evidence_challenge_schema(len(completion_criteria)),
         )
     challenge = _normalize_evidence_challenge_result(
-        _json_loads_best_effort(raw, {}), ledger_result, len(completion_criteria)
+        _json_loads_best_effort(raw, {}),
+        ledger_result,
+        len(completion_criteria),
+        requirements.get("identifying_criteria"),
+        state.get("enforced_gaps"),
     )
     next_steps = challenge.get("next_steps", []) or list(
         ledger_result.get("next_steps", []) or []
@@ -1265,10 +1311,7 @@ Challenge the ledger and decide whether a final answer is permitted."""
     print(f"  [CHALLENGE] answer_permitted={challenge['answer_permitted']}")
     if gaps:
         print(f"    blocks: {', '.join(gaps[:4])}")
-    if challenge.get("dropped_gaps"):
-        print(
-            f"    dropped (no matching requirement): {', '.join(challenge['dropped_gaps'][:4])}"
-        )
+    _emit_dropped_gaps("evidence_challenge", challenge)
     if next_steps:
         print(f"    next: {next_steps[0][:100]}")
 
@@ -1283,6 +1326,9 @@ Challenge the ledger and decide whether a final answer is permitted."""
         "evidence_challenge_result": challenge,
         "evidence_audit": audit,
         "iteration": iteration,
+        "enforced_gaps": _remember_enforced_gaps(
+            state, list(challenge.get("blocking_gaps", []))
+        ),
     }
     if challenge["answer_permitted"]:
         update["plan"] = []
@@ -1390,6 +1436,8 @@ build the evidence ledger from what is already fetched only."""
         completion_criteria,
         answer_mode,
         valid_source_ids,
+        requirements.get("identifying_criteria"),
+        state.get("enforced_gaps"),
     )
     admitted = ledger_result["admissible_sources"]
     _emit_evidence_admitted(candidate_sources, admitted, ledger_result)
@@ -1405,6 +1453,7 @@ build the evidence ledger from what is already fetched only."""
         f"supported claims {ledger_result['supported_claim_count']}; "
         f"answer_ready={ledger_result['answer_ready']}"
     )
+    _emit_dropped_gaps("evidence_reextract", ledger_result)
 
     audit = dict(state.get("evidence_audit", {}) or {})
     audit["passed"] = ledger_result["answer_ready"]
@@ -1419,6 +1468,9 @@ build the evidence ledger from what is already fetched only."""
         "evidence_audit": audit,
         "constraint_registry": registry,
         "iteration": iteration,
+        "enforced_gaps": _remember_enforced_gaps(
+            state, list(ledger_result.get("global_missing", []))
+        ),
     }
     if ledger_result["answer_ready"]:
         update["plan"] = []

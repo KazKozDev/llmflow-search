@@ -6,6 +6,7 @@ import sys
 
 import ollama
 
+from . import schema_guard, trace
 from .config import FAST_MODEL, FAST_MODEL_ROLES, OLLAMA_TIMEOUT_SECONDS
 from .console import print
 
@@ -184,6 +185,7 @@ def _ollama_chat(
     elif json_mode and not tools:
         kwargs["format"] = "json"
     response = _ollama_client().chat(**kwargs)
+    _record_usage(model, response)
     msg = response["message"]
 
     if msg.get("tool_calls"):
@@ -196,6 +198,23 @@ def _ollama_chat(
             tcs.append(d)
         return {"role": "assistant", "content": "", "tool_calls": tcs}
     return {"role": "assistant", "content": msg.get("content", "")}
+
+
+def _record_usage(model: str, response) -> None:
+    """Hand this round trip's token counts to the trace, if one is open.
+
+    Ollama reports ``prompt_eval_count``/``eval_count`` per response. They are the only
+    honest basis for a cost-per-question number: wall clock conflates a queued cloud
+    request with an expensive one, and a call count treats a 40k-token evidence ledger
+    and a one-line classification as the same purchase.
+    """
+    try:
+        data = response.model_dump() if hasattr(response, "model_dump") else dict(response)
+        trace.record_usage(
+            model, data.get("prompt_eval_count"), data.get("eval_count")
+        )
+    except Exception:  # accounting must not be able to fail a run
+        pass
 
 
 def _extract_json_text(content: str) -> str:
@@ -302,13 +321,23 @@ def _ollama_chat_schema(
         temperature=temperature,
         format_schema=format_schema,
     )
-    return _retry_after_bad_json(
+    content = _retry_after_bad_json(
         schema_model,
         messages,
         system,
         response.get("content", ""),
         format_schema=format_schema,
     )
+    # Recorded, not enforced. Whether the decoder honored the schema is a property of the
+    # backend (see schema_guard), and the callers already normalize whatever comes back;
+    # what was missing was any way to see how often they were normalizing away a
+    # response that never had the requested shape at all.
+    trace.record_schema(
+        schema_guard.conforms(
+            _json_loads_best_effort(content, None) or {}, format_schema
+        )
+    )
+    return content
 
 
 def _json_loads_best_effort(content: str, fallback):

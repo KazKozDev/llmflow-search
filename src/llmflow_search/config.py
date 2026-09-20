@@ -209,6 +209,106 @@ SOURCE_CONTENT_MAX_CHARS = 25000
 TOTAL_SOURCES_MAX_CHARS = 100000
 
 
+# The model every number in docs/evaluation.md was measured on, and the default for the
+# benchmark runner, the baseline and the attribution judge. Pinned rather than "whatever
+# the picker offers", because a benchmark whose model drifts cannot be compared with its
+# own earlier results.
+EVAL_MODEL = os.getenv("LLMFLOW_SEARCH_EVAL_MODEL", "deepseek-v4.1-flash:cloud")
+
+
+# The model that judges whether a cited source supports a claim. Deliberately not
+# EVAL_MODEL: a model grading its own output shares its blind spots, and "the writer
+# agrees with the writer" is not evidence. Keeping it separate also means the judge can be
+# held fixed while the system under test changes, which is what makes two scored runs
+# comparable at all.
+JUDGE_MODEL = os.getenv("LLMFLOW_SEARCH_JUDGE_MODEL", "gemma4:31b-cloud")
+
+
+# Pages opened without anyone being asked, after a discovery round that queued no read.
+# The rule exists because runs used to search repeatedly and answer from result snippets
+# alone, having opened nothing. Measured on the benchmark corpus its cost is visible: the
+# gold document is the top hit for 83% of questions, yet 5 pages are opened after the
+# first search and 3 after each later one — 14 per question, of which 12% mattered.
+AUTO_READ_TOP_K = _positive_int_env("LLMFLOW_SEARCH_AUTO_READ_TOP_K", 5)
+AUTO_READ_FOLLOWUP_TOP_K = _positive_int_env(
+    "LLMFLOW_SEARCH_AUTO_READ_FOLLOWUP_TOP_K", 3
+)
+
+
+# Who picks the pages to open after a search:
+#   "auto"  — the top AUTO_READ_TOP_K of the ranked catalog, unconditionally
+#   "model" — the post-batch controller, which is already shown that catalog with each
+#             URL's title and search snippet and is already allowed to propose reads. In
+#             "auto" it is not even asked, because its answer would be discarded.
+# The safety net that made "auto" necessary survives either way: a round that would end
+# having opened nothing still opens the top of the catalog.
+READ_SELECTION = os.getenv("LLMFLOW_SEARCH_READ_SELECTION", "auto").strip().lower()
+
+
+# Whether every tool result is handed to a model to be diagnosed. One call per search and
+# per page opened, which measured 26 calls and 47% of all tokens on a 30-question run —
+# more than the evidence ledger, the challenge pass and the post-batch controller put
+# together. What it produces is a per-page summary, a source-quality guess and a
+# do-not-revisit list; the evidence ledger judges sources by their text and never reads
+# any of it. Off, observations._fallback_observation supplies the objective facts — title,
+# publication date, whether content came back — directly from the tool's own payload.
+#
+# Default off, because measuring it settled the question the other way round from the one
+# being asked. It was not merely expensive: removing it improved every quality measure at
+# once — more right answers, more attributable claims, fewer refusals — while halving the
+# tokens and cutting median latency by 59%. Its per-page verdicts were reaching the
+# post-batch controller as advice about what not to read, and that advice was worse than
+# no advice.
+DIAGNOSE_OBSERVATIONS = _flag_env("LLMFLOW_SEARCH_DIAGNOSE_OBSERVATIONS", False)
+
+
+# Whether a completion criterion may be marked as identifying the subject rather than as
+# something the answer must state with a citation. Off restores the behaviour measured
+# before the distinction existed: every criterion is a proof obligation, which on a
+# ten-clue puzzle question makes strict mode unreachable and refuses runs that already
+# hold the answer. See requirements._identifying_indices.
+SEPARATE_IDENTIFYING_CRITERIA = _flag_env(
+    "LLMFLOW_SEARCH_IDENTIFYING_CRITERIA", True
+)
+
+
+# Whether the verifier's prose gets one deterministic pass for sentences that assert
+# something and carry no [n] marker. The answer prompt has always asked for a citation on
+# every factual sentence and has never got one: measured over ten BrowseComp-Plus
+# questions, half the claim sentences in a verified answer had no marker at all, which put
+# a ceiling of about one half on the share of an answer that can be attributed at all.
+# Asking again in the prompt is what was already being done; this re-reads the produced
+# text and asks once about the specific sentences that failed.
+CITATION_REPAIR = _flag_env("LLMFLOW_SEARCH_CITATION_REPAIR", True)
+
+
+# The repair is skipped when coverage is already at least this high: the last uncited
+# sentence in a well-cited answer is usually a framing line, and a model call to hunt it
+# costs more than it returns.
+CITATION_COVERAGE_TARGET = _non_negative_float_env(
+    "LLMFLOW_SEARCH_CITATION_TARGET", 0.95
+)
+
+
+# A repair that shortens the answer past this fraction of its original length has not
+# attached citations, it has deleted the answer. Such a result is discarded and the
+# verified text is kept as it was.
+CITATION_REPAIR_MIN_KEPT = 0.6
+
+
+# The same treatment for the editorial contract: the drafter and the verifier are asked
+# for a frame, one cutoff, figures behind comparatives and no empty headings, and asking
+# is all that happened until the text was re-read. This re-reads it, names the defects a
+# regular expression can prove, and spends one call on them.
+REPORT_STRUCTURE_REPAIR = _flag_env("LLMFLOW_SEARCH_STRUCTURE_REPAIR", True)
+
+
+# A structure repair is allowed to cut — deleting an unsupported comparative is the
+# correct fix. It is not allowed to cut this far: a result shorter than this fraction of
+# the report has not repaired it, and the unrepaired report is the better of the two.
+STRUCTURE_REPAIR_MIN_KEPT = 0.6
+
+
 INSUFFICIENT_EVIDENCE_MESSAGE = (
     "The found sources do not provide enough information for a reliable answer."
 )

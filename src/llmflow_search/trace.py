@@ -110,6 +110,47 @@ def set_round(number: int) -> None:
     bind(round=int(number))
 
 
+# Token usage is reported by the transport, one report per HTTP round trip, while the
+# unit anyone reasons about is the decision. A retry after unparseable JSON is a second
+# round trip serving the same decision and its tokens are part of that decision's bill,
+# so the transport appends into whatever sink the enclosing ``model_call`` opened rather
+# than emitting an event of its own.
+_USAGE_SINK: ContextVar[list[dict] | None] = ContextVar(
+    "llmflow_search_usage", default=None
+)
+
+
+def record_usage(
+    model: str, prompt_tokens: int | None, completion_tokens: int | None
+) -> None:
+    """Attribute one transport round trip's tokens to the decision in progress."""
+    sink = _USAGE_SINK.get()
+    if sink is None:
+        return
+    sink.append(
+        {
+            "model": model,
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+        }
+    )
+
+
+# Whether the decoder actually honored the JSON schema it was handed. Recorded the same
+# way as token usage, and for the same reason: the unit that matters is the decision, and
+# one decision may take a repair round trip before it yields a conforming object.
+_SCHEMA_SINK: ContextVar[list[dict] | None] = ContextVar(
+    "llmflow_search_schema", default=None
+)
+
+
+def record_schema(conforms: bool, stage: str = "first") -> None:
+    sink = _SCHEMA_SINK.get()
+    if sink is None:
+        return
+    sink.append({"conforms": bool(conforms), "stage": stage})
+
+
 @contextmanager
 def model_call(role: str, prompt: str = "", model: str = ""):
     """Time one model call and record which decision it was serving.
@@ -118,8 +159,28 @@ def model_call(role: str, prompt: str = "", model: str = ""):
     of the node that asked, not of the transport, and latency work needs to know which
     decisions are worth making without a model at all.
     """
-    with span("llm_call", role=role, model=model, prompt_chars=len(prompt or "")):
-        yield
+    token = _USAGE_SINK.set([])
+    schema_token = _SCHEMA_SINK.set([])
+    try:
+        with span("llm_call", role=role, model=model, prompt_chars=len(prompt or "")) as extra:
+            yield
+            schema = _SCHEMA_SINK.get() or []
+            if schema:
+                extra["schema_conforms"] = bool(schema[-1]["conforms"])
+                extra["schema_conforms_first_try"] = bool(schema[0]["conforms"])
+                extra["schema_attempts"] = len(schema)
+            usage = _USAGE_SINK.get() or []
+            extra["prompt_tokens"] = sum(u["prompt_tokens"] for u in usage)
+            extra["completion_tokens"] = sum(u["completion_tokens"] for u in usage)
+            # More than one when the decision needed a repair round trip. Cost work needs
+            # the retries visible, not folded invisibly into a single call's token count.
+            extra["round_trips"] = len(usage)
+            billed = {u["model"] for u in usage if u["model"]}
+            if billed:
+                extra["billed_models"] = sorted(billed)
+    finally:
+        _USAGE_SINK.reset(token)
+        _SCHEMA_SINK.reset(schema_token)
 
 
 @contextmanager

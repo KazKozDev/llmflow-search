@@ -203,28 +203,73 @@ def _bounded_content_text(text: str) -> str:
     )
 
 
+def _canonical(text: str) -> str:
+    """A form in which two encodings of the same value compare equal."""
+    try:
+        return json.dumps(json.loads(text), sort_keys=True, ensure_ascii=False)
+    except (TypeError, json.JSONDecodeError):
+        return (text or "").strip()
+
+
+def _restates(structured_text: str, parts: list[str]) -> bool:
+    """Whether the structured block only repeats a text block already collected.
+
+    Every FastMCP tool declared ``-> str`` answers twice: once as a text content block,
+    and once as ``structuredContent`` — which, for a scalar return, is that same string
+    wrapped as ``{"result": "..."}``. Comparing the two encodings byte for byte never
+    finds them equal, so both were kept, and two kept parts are merged into a JSON *array*
+    below. Every consumer downstream reads a tool result as an object: the search memory,
+    the source extractor and the trace's search-result recorder all begin by asking the
+    payload for a key. Handed an array they find nothing and say nothing, so a run against
+    such a server discovers no URLs at all, reads no pages, and reports that the evidence
+    was insufficient — with no error anywhere to say why.
+
+    Unwrapping the scalar wrapper and comparing canonically is what makes the duplicate
+    recognizable as one. The comparison must happen on the *raw* strings, before either is
+    bounded: bounding truncates a long page's body inside the payload and truncates the
+    payload inside the ``{"result": ...}`` wrapper at a different point, so two encodings
+    of one 12kB page stop matching precisely when a page is long enough to matter.
+    """
+    candidates = [structured_text]
+    try:
+        value = json.loads(structured_text)
+    except (TypeError, json.JSONDecodeError):
+        value = None
+    if isinstance(value, dict) and set(value) == {"result"}:
+        inner = value["result"]
+        candidates.append(
+            inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)
+        )
+    canonical_parts = {_canonical(part) for part in parts}
+    return any(_canonical(candidate) in canonical_parts for candidate in candidates)
+
+
 def _mcp_result_text(result) -> str:
-    """Preserve text, embedded text resources, and structured MCP output."""
-    parts: list[str] = []
+    """Preserve text, embedded text resources, and structured MCP output.
+
+    Deduplicate first, bound second. Doing it the other way round compares two truncations
+    of the same value and concludes they are different values — see ``_restates``.
+    """
+    raw_parts: list[str] = []
     for content in getattr(result, "content", []) or []:
         text = getattr(content, "text", None)
         if isinstance(text, str) and text:
-            parts.append(_bounded_content_text(text))
+            raw_parts.append(text)
             continue
         resource = getattr(content, "resource", None)
         resource_text = getattr(resource, "text", None)
         if isinstance(resource_text, str) and resource_text:
-            parts.append(_bounded_content_text(resource_text))
+            raw_parts.append(resource_text)
 
     structured = getattr(result, "structuredContent", None)
     if structured is None:
         structured = getattr(result, "structured_content", None)
     if structured is not None:
-        structured_text = _bounded_content_text(
-            json.dumps(structured, ensure_ascii=False, default=str)
-        )
-        if structured_text and structured_text not in parts:
-            parts.append(structured_text)
+        structured_text = json.dumps(structured, ensure_ascii=False, default=str)
+        if structured_text and not _restates(structured_text, raw_parts):
+            raw_parts.append(structured_text)
+
+    parts = [bounded for bounded in map(_bounded_content_text, raw_parts) if bounded]
 
     if len(parts) == 1:
         text = parts[0].strip()

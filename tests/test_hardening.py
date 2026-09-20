@@ -261,3 +261,73 @@ def test_trace_context_isolated_between_concurrent_tasks(tmp_path):
     first, second = asyncio.run(run())
     assert first["query_id"] == "q1"
     assert second["query_id"] == "q2"
+
+
+def _read_view(**overrides):
+    from llmflow_search.policy import RoundView
+
+    base = dict(
+        remaining=(),
+        ranked_unread=("https://a.test", "https://b.test", "https://c.test"),
+        known_urls=frozenset(
+            {"https://a.test", "https://b.test", "https://c.test"}
+        ),
+        tool_just_run="web_search",
+        has_read_anything=False,
+    )
+    base.update(overrides)
+    return RoundView(**base)
+
+
+def test_model_selection_leaves_the_choice_to_the_controller(monkeypatch):
+    from llmflow_search import policy
+
+    monkeypatch.setattr(policy, "READ_SELECTION", "model")
+    forced, by = policy.forced_reads(_read_view(has_read_anything=True))
+    assert forced == []
+    assert by == ""
+
+
+def test_auto_selection_still_opens_the_top_of_the_catalog(monkeypatch):
+    from llmflow_search import policy
+
+    monkeypatch.setattr(policy, "READ_SELECTION", "auto")
+    monkeypatch.setattr(policy, "AUTO_READ_FOLLOWUP_TOP_K", 2)
+    forced, by = policy.forced_reads(_read_view(has_read_anything=True))
+    assert by == "auto_rank"
+    assert len(forced) == 2
+
+
+def test_a_round_that_would_open_nothing_still_opens_something(monkeypatch):
+    """The failure the unconditional rule exists for: answering from snippets alone."""
+    from llmflow_search import policy
+
+    monkeypatch.setattr(policy, "READ_SELECTION", "model")
+    action = policy.decide(_read_view(), decision="NEXT", proposed_steps=[])
+    assert action.reads
+    assert action.source == "auto_fallback"
+
+
+def test_the_net_does_not_fire_once_something_has_been_read(monkeypatch):
+    from llmflow_search import policy
+
+    monkeypatch.setattr(policy, "READ_SELECTION", "model")
+    action = policy.decide(
+        _read_view(has_read_anything=True),
+        decision="NEXT",
+        proposed_steps=["web_search: another angle"],
+    )
+    assert not action.reads
+
+
+def test_the_net_does_not_override_a_read_the_controller_chose(monkeypatch):
+    from llmflow_search import policy
+
+    monkeypatch.setattr(policy, "READ_SELECTION", "model")
+    action = policy.decide(
+        _read_view(),
+        decision="NEXT",
+        proposed_steps=["web_read: https://b.test"],
+    )
+    assert action.reads == ("https://b.test",)
+    assert action.source == "model"
