@@ -1,0 +1,18 @@
+#!/usr/bin/expect -f
+# Drive one real research session for the demo recording. Types the question into the
+# running agent exactly as a person would; every line after that is the agent's own output.
+set timeout 900
+set question [lindex $argv 0]
+
+spawn -noecho llmflow-search
+expect ">>> "
+sleep 1
+send -- "$question"
+sleep 0.4
+send -- "\r"
+expect {
+    "Type next question or 'exit'" { sleep 2 }
+    timeout { puts "\n[timed out]" }
+}
+send -- "exit\r"
+expect eof
