@@ -1,0 +1,48 @@
+#!/usr/bin/expect -f
+# Drive one real research session for the demo recording. Types the question into the
+# running agent exactly as a person would; every line after that is the agent's own output.
+#
+# The question arrives in the environment rather than on the command line. Built into a
+# command string it would break on the first apostrophe — "what's new in Python" ends the
+# quoting — and a question is an argument, not a fragment of shell.
+set timeout 900
+
+if {![info exists env(DEMO_QUESTION)] || [string trim $env(DEMO_QUESTION)] eq ""} {
+    puts stderr "DEMO_QUESTION is not set"
+    exit 2
+}
+set question $env(DEMO_QUESTION)
+
+spawn -noecho llmflow-search
+expect {
+    ">>> " {}
+    timeout {
+        puts stderr "\nthe agent never reached its prompt"
+        exit 1
+    }
+    eof {
+        puts stderr "\nthe agent exited before its prompt"
+        exit 1
+    }
+}
+sleep 1
+send -- "$question"
+sleep 0.4
+send -- "\r"
+
+# A run that times out or dies still leaves a cast file behind, and a cast file is all the
+# renderer looks at. Exiting zero here would publish a GIF of a failed session as though
+# it were the demo, so the failure has to travel.
+expect {
+    "Type next question or 'exit'" { sleep 2 }
+    timeout {
+        puts stderr "\nthe session did not finish within $timeout seconds"
+        exit 1
+    }
+    eof {
+        puts stderr "\nthe agent exited before answering"
+        exit 1
+    }
+}
+send -- "exit\r"
+expect eof

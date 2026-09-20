@@ -6,6 +6,7 @@ unless noted otherwise. The most commonly used ones are also listed in the main
 
 | Variable | Default | What it does | Source |
 |---|---|---|---|
+| `LLMFLOW_SEARCH_MODEL` | Unset | Preselects the Ollama model and skips the interactive picker; a scripted run, a recording or anything driven from a pipe needs this | `llm.py` |
 | `LLMFLOW_SEARCH_MCP_CMD` | `footnote-mcp` | Command launched as the stdio MCP server | `config.py` |
 | `LLMFLOW_SEARCH_PROFILE` | `auto` | Force `footnote` or `generic`; `auto` detects from the connected tool list | `profiles.py` |
 | `LLMFLOW_SEARCH_SEARCH_DELAY_SECONDS` | `12.0` | Minimum delay between calls to scraped search engines (one call fans out to four of them) | `config.py` |

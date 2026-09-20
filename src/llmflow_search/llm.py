@@ -1,6 +1,7 @@
 """Ollama chat wrappers, JSON extraction, and the interactive model picker."""
 
 import json
+import os
 import re
 import sys
 
@@ -34,6 +35,18 @@ def pick_model() -> str:
     if not models.models:
         print("[!] No models. Run: ollama pull qwen2.5:7b")
         sys.exit(1)
+
+    # A preselected model skips the catalog and the prompt entirely. The picker is the
+    # right default for a person at a keyboard and the wrong one everywhere else: a
+    # scripted run, a recording, or anything driven from a pipe has to answer a question
+    # it already knows the answer to, and first scroll past every model Ollama holds.
+    preselected = os.getenv("LLMFLOW_SEARCH_MODEL", "").strip()
+    if preselected:
+        if preselected not in [m.model for m in models.models]:
+            print(f"[!] LLMFLOW_SEARCH_MODEL={preselected} is not pulled in Ollama")
+            sys.exit(1)
+        print(f"\nUsing: {preselected}")
+        return preselected
 
     print(f"\nOllama models ({len(models.models)} total):\n")
     for i, m in enumerate(models.models, 1):

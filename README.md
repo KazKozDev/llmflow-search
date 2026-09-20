@@ -6,7 +6,7 @@ Ask a question; a local model searches the web and answers with citations.
 git clone https://github.com/KazKozDev/llmflow-search.git && cd llmflow-search && ./agent.command
 ```
 
-![Running a cited web research session in LLMFlow-Search](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
+![A real session: the agent plans, reads five pages, and answers with numbered sources](https://raw.githubusercontent.com/KazKozDev/llmflow-search/main/assets/llmflow-search-demo.gif)
 
 Local Ollama models · Every claim cited · Refuses thin evidence · MIT
 
@@ -81,6 +81,7 @@ Every setting is an environment variable. The full table is in [docs/configurati
 
 | Variable | Default | What it does |
 |---|---|---|
+| `LLMFLOW_SEARCH_MODEL` | unset | Preselects the Ollama model and skips the picker |
 | `LLMFLOW_SEARCH_MCP_CMD` | `footnote-mcp` | Command launched as the stdio MCP server |
 | `LLMFLOW_SEARCH_PROFILE` | `auto` | Force `footnote` or `generic`; `auto` detects from the tool list |
 | `LLMFLOW_SEARCH_FAST_MODEL` | unset | A second, cheaper Ollama model for bookkeeping decisions |
