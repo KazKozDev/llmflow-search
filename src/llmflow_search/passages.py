@@ -303,6 +303,25 @@ class PassageStore:
         )
 
 
+# When a query matches more of a page than this, it is not selecting a passage — it is
+# matching the page's furniture, and the selection is noise.
+#
+# "LLM news" or "what happened this week" hits every headline block, teaser strip and
+# section index, because generic words are what those repeat; measured on a news page,
+# every single window scored, and the best of them scored 0.06. A specific question
+# behaves in the opposite way: "when was the observatory commissioned" matched 1.4% of the
+# windows of a long page, and the winner scored 8.0. Share of the page matched separates
+# the two cleanly, where the length of the question does not — both of those queries are
+# two content words long.
+#
+# It matters because of what happens downstream. With no real signal, the windows that win
+# are the ones any page on the site would have; grounding then strips every fact the
+# excerpt does not carry, and the report arrives as a scrape of headlines with the proper
+# names removed. A question that cannot prefer one part of the page does not get to
+# choose: the page is read from the top, where a news page keeps its story.
+MAX_MATCHING_PASSAGE_SHARE = 0.5
+
+
 def relevant_excerpt(text: str, query: str, budget: int, store: PassageStore | None = None) -> str:
     """The ``budget`` characters of ``text`` most likely to answer ``query``.
 
@@ -310,6 +329,10 @@ def relevant_excerpt(text: str, query: str, budget: int, store: PassageStore | N
     reads as the page reads; an ellipsis marks each place where something was skipped. The
     alternative — and what this replaces — is the first ``budget`` characters, which on a
     long page is the part every page has in common.
+
+    That alternative is still the right one for a broad question: see
+    ``MIN_QUERY_TERMS_FOR_RELEVANCE``. Relevance selection is only an improvement when the
+    question is specific enough to prefer one part of a page over another.
     """
     body = (text or "").strip()
     if len(body) <= budget:
@@ -323,7 +346,8 @@ def relevant_excerpt(text: str, query: str, budget: int, store: PassageStore | N
 
     scorer = (store or PassageStore()).scorer
     scores = scorer.score(query, passages)
-    if not any(score > 0 for score in scores):
+    matching = sum(1 for score in scores if score > 0)
+    if not matching or matching > MAX_MATCHING_PASSAGE_SHARE * len(scores):
         return body[:budget]
 
     ordered = sorted(zip(scores, passages, strict=True), key=lambda pair: (-pair[0], pair[1].offset))

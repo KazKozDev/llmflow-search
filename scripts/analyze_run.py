@@ -18,6 +18,7 @@ import argparse
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
+from statistics import fmean
 from typing import Any
 
 # Gold URLs, search results and read arguments all have to compare equal, and they reach
@@ -44,7 +45,46 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print one row per query in addition to the totals.",
     )
+    # No price table ships with this repo. Token counts are measured; a dollar figure is
+    # a local fact about one account's contract, and inventing one would put a number in
+    # a report that nobody can reproduce.
+    parser.add_argument(
+        "--price-in",
+        type=float,
+        default=None,
+        help="USD per million prompt tokens, for a cost-per-question figure.",
+    )
+    parser.add_argument(
+        "--price-out",
+        type=float,
+        default=None,
+        help="USD per million completion tokens.",
+    )
     return parser.parse_args()
+
+
+def _percentiles(values: list[float]) -> dict[str, float | None]:
+    """p50/p90/p95/max of a sample, by nearest rank.
+
+    The mean is what a benchmark reports and the tail is what a user feels: these runs
+    have a long right tail (a question that re-searches four times costs minutes, not
+    seconds), and averaging it away hides the only latency anyone complains about.
+    """
+    if not values:
+        return {name: None for name in ("p50", "p90", "p95", "max", "mean")}
+    ordered = sorted(values)
+
+    def at(fraction: float) -> float:
+        rank = max(1, min(len(ordered), round(fraction * len(ordered) + 0.5)))
+        return round(ordered[rank - 1], 2)
+
+    return {
+        "mean": round(fmean(ordered), 2),
+        "p50": at(0.50),
+        "p90": at(0.90),
+        "p95": at(0.95),
+        "max": round(ordered[-1], 2),
+    }
 
 
 def load_events(path: Path) -> list[dict]:
@@ -119,11 +159,25 @@ def analyze_query(query_id: str, events: list[dict]) -> dict[str, Any]:
 
     llm_calls = [e for e in events if e.get("event") == "llm_call"]
     roles = Counter(str(e.get("role")) for e in llm_calls)
+    prompt_tokens = sum(int(e.get("prompt_tokens") or 0) for e in llm_calls)
+    completion_tokens = sum(int(e.get("completion_tokens") or 0) for e in llm_calls)
+    tokens_by_role: Counter = Counter()
+    for event in llm_calls:
+        tokens_by_role[str(event.get("role"))] += int(
+            event.get("prompt_tokens") or 0
+        ) + int(event.get("completion_tokens") or 0)
+    # Calls that asked for a JSON schema. On a backend that does not enforce one the
+    # request is silently ignored, so this is the only place the difference shows up.
+    schema_calls = [e for e in llm_calls if e.get("schema_conforms") is not None]
+    schema_conforming = sum(1 for e in schema_calls if e.get("schema_conforms"))
+    round_trips = sum(int(e.get("round_trips") or 0) for e in llm_calls)
     duration_by_event: dict[str, float] = defaultdict(float)
     for event in events:
         if event.get("duration_ms") is not None:
             duration_by_event[str(event.get("event"))] += float(event["duration_ms"])
 
+    tool_calls = [e for e in events if e.get("event") == "tool_call"]
+    tools_used = Counter(str(e.get("tool")) for e in tool_calls)
     decisions = [e for e in events if e.get("event") == "post_batch_decision"]
     asked = [e for e in decisions if e.get("asked_model")]
     # The controller said one thing and the policy did another. A rule nobody ever
@@ -173,6 +227,16 @@ def analyze_query(query_id: str, events: list[dict]) -> dict[str, Any]:
         # Cost
         "llm_calls": len(llm_calls),
         "llm_calls_by_role": dict(roles),
+        "tool_calls": len(tool_calls),
+        "tool_calls_by_tool": dict(tools_used),
+        "tool_call_errors": sum(1 for e in tool_calls if e.get("error")),
+        "round_trips": round_trips,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "tokens_by_role": dict(tokens_by_role),
+        "schema_calls": len(schema_calls),
+        "schema_conforming": schema_conforming,
         "post_batch_decisions": len(decisions),
         "post_batch_asked": len(asked),
         "post_batch_overruled": overruled,
@@ -188,14 +252,42 @@ def _mean(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 3) if values else None
 
 
-def summarize(per_query: list[dict]) -> dict[str, Any]:
+def _rate(numerator: int, denominator: int) -> float | None:
+    return round(numerator / denominator, 3) if denominator else None
+
+
+def summarize(
+    per_query: list[dict], price_in: float | None = None, price_out: float | None = None
+) -> dict[str, Any]:
     answered = [q for q in per_query if not q.get("error")]
     seconds: dict[str, float] = defaultdict(float)
     roles: Counter = Counter()
+    tokens_by_role: Counter = Counter()
     for query in per_query:
         for name, value in (query.get("seconds_by_event") or {}).items():
             seconds[name] += value
         roles.update(query.get("llm_calls_by_role") or {})
+        tokens_by_role.update(query.get("tokens_by_role") or {})
+
+    latencies = [
+        float(q["elapsed_seconds"])
+        for q in per_query
+        if q.get("elapsed_seconds") is not None
+    ]
+    prompt_tokens = sum(q.get("prompt_tokens") or 0 for q in per_query)
+    completion_tokens = sum(q.get("completion_tokens") or 0 for q in per_query)
+    schema_calls = sum(q.get("schema_calls") or 0 for q in per_query)
+    schema_conforming = sum(q.get("schema_conforming") or 0 for q in per_query)
+    queries = len(per_query) or 1
+    cost: dict[str, Any] = {}
+    if price_in is not None and price_out is not None:
+        usd = (prompt_tokens * price_in + completion_tokens * price_out) / 1_000_000
+        cost = {
+            "usd_total": round(usd, 4),
+            "usd_per_query": round(usd / queries, 4),
+            "price_in_per_mtok": price_in,
+            "price_out_per_mtok": price_out,
+        }
 
     return {
         "queries": len(per_query),
@@ -239,8 +331,32 @@ def summarize(per_query: list[dict]) -> dict[str, Any]:
                 [float(q["score"]) for q in per_query if q.get("score") is not None]
             ),
         },
+        "latency_seconds": _percentiles(latencies),
+        "tokens": {
+            "prompt_per_query": round(prompt_tokens / queries, 1),
+            "completion_per_query": round(completion_tokens / queries, 1),
+            "total_per_query": round((prompt_tokens + completion_tokens) / queries, 1),
+            "prompt_total": prompt_tokens,
+            "completion_total": completion_tokens,
+            "by_role_per_query": {
+                role: round(total / queries, 1)
+                for role, total in tokens_by_role.most_common()
+            },
+            **({"cost": cost} if cost else {}),
+        },
+        "schema": {
+            "calls_requesting_a_schema": schema_calls,
+            # Below 100% means the backend ignored the schema: the decoder was not
+            # constraining anything and the output's shape was a matter of luck.
+            "conforming": _rate(schema_conforming, schema_calls),
+        },
         "cost": {
             "llm_calls_per_query": _mean([float(q["llm_calls"]) for q in per_query]),
+            "tool_calls_per_query": _mean([float(q["tool_calls"]) for q in per_query]),
+            "tool_call_errors": sum(q["tool_call_errors"] for q in per_query),
+            "round_trips_per_query": _mean(
+                [float(q.get("round_trips") or 0) for q in per_query]
+            ),
             "llm_calls_by_role": dict(roles.most_common()),
             "post_batch_decisions": sum(q["post_batch_decisions"] for q in per_query),
             "post_batch_asked": sum(q["post_batch_asked"] for q in per_query),
@@ -263,6 +379,8 @@ def summarize(per_query: list[dict]) -> dict[str, Any]:
 
 
 def _format(summary: dict[str, Any], per_query: list[dict], show_rows: bool) -> str:
+    latency = summary["latency_seconds"]
+    tokens = summary["tokens"]
     lines = [
         f"Queries: {summary['answered']}/{summary['queries']} answered",
         "",
@@ -298,16 +416,43 @@ def _format(summary: dict[str, Any], per_query: list[dict], show_rows: bool) -> 
         else "  gold citation            n/a",
         f"  average score            {summary['synthesis']['average_score']}",
         "",
+        "LATENCY (seconds per question)",
+        f"  mean {latency['mean']}   p50 {latency['p50']}   p90 {latency['p90']}"
+        f"   p95 {latency['p95']}   max {latency['max']}",
+        "",
         "COST",
-        f"  model calls per query    {summary['cost']['llm_calls_per_query']}",
+        f"  tokens per query         {tokens['total_per_query']}"
+        f"  ({tokens['prompt_per_query']} in / {tokens['completion_per_query']} out)",
+        f"  model calls per query    {summary['cost']['llm_calls_per_query']}"
+        f"  ({summary['cost']['round_trips_per_query']} HTTP round trips)",
+        f"  tool calls per query     {summary['cost']['tool_calls_per_query']}"
+        f"  ({summary['cost']['tool_call_errors']} errored)",
         f"  seconds per query        {summary['cost']['seconds_per_query']}",
         f"  post-batch rounds        {summary['cost']['post_batch_decisions']}"
         f" ({summary['cost']['post_batch_asked']} asked the model)",
         f"  controller overruled     {summary['cost']['post_batch_overruled']}",
         f"  proposed steps refused   {summary['cost']['proposed_steps_rejected']}",
     ]
+    if tokens.get("cost"):
+        lines.append(
+            f"  USD per query            {tokens['cost']['usd_per_query']}"
+            f"  (at {tokens['cost']['price_in_per_mtok']}/"
+            f"{tokens['cost']['price_out_per_mtok']} per Mtok)"
+        )
+    schema = summary["schema"]
+    if schema["calls_requesting_a_schema"]:
+        conforming = schema["conforming"]
+        lines.append(
+            f"  schema honored           {conforming:.0%} of"
+            f" {schema['calls_requesting_a_schema']} constrained calls"
+            if conforming is not None
+            else "  schema honored           n/a"
+        )
+    lines.append("  tokens by role (per query)")
+    for role, value in list(tokens["by_role_per_query"].items())[:12]:
+        lines.append(f"    {role:<20} {value}")
     for role, count in summary["cost"]["llm_calls_by_role"].items():
-        lines.append(f"    {role:<20} {count}")
+        lines.append(f"    {role:<20} {count} calls")
     lines.append("  seconds by event type")
     for name, value in summary["cost"]["total_seconds_by_event"].items():
         lines.append(f"    {name:<20} {value}")
@@ -338,7 +483,7 @@ def main() -> None:
         if query_id != "None"
     ]
     per_query.sort(key=lambda q: q["query_id"])
-    summary = summarize(per_query)
+    summary = summarize(per_query, args.price_in, args.price_out)
 
     print(_format(summary, per_query, args.per_query))
 

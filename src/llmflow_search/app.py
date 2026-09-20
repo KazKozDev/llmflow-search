@@ -108,6 +108,7 @@ async def main():
                         "draft_result": {},
                         "verification_result": {},
                         "evidence_audit": {},
+                        "enforced_gaps": [],
                         "constraint_registry": [],
                         "final_answer": "",
                         "iteration": 0,

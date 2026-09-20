@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llmflow_search import profiles, prompts
 from llmflow_search.profiles import (
     FOOTNOTE_PROFILE,
     GENERIC_PROFILE,
@@ -56,3 +57,15 @@ def test_generic_sources_dedup_identical_outputs_but_keep_distinct():
 def test_generic_sources_skip_empty_output():
     assert generic_sources_from_tool_result("t", "") == []
     assert generic_sources_from_tool_result("t", "   \n  ") == []
+
+
+def test_both_profiles_carry_the_report_editorial_contract():
+    """A rule the verifier never sees is a rule the verifier rewrites away."""
+    for profile in (profiles.FOOTNOTE_PROFILE, profiles.GENERIC_PROFILE):
+        for prompt in (profile.answer_prose, profile.verify_prose):
+            assert prompts.REPORT_EDITORIAL_RULES in prompt, profile.name
+
+
+def test_editorial_contract_never_outranks_grounding():
+    assert "grounding wins" in prompts.ANSWER_PROSE_SYSTEM_PROMPT
+    assert "never add a fact to satisfy them" in prompts.VERIFY_PROSE_SYSTEM_PROMPT

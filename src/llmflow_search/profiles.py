@@ -27,6 +27,8 @@ class Profile:
     eval: str
     answer_prose: str
     verify_prose: str
+    citation_repair: str
+    structure_repair: str
     verify_verdict: str
     evidence_ledger: str
     evidence_challenge: str
@@ -50,6 +52,8 @@ FOOTNOTE_PROFILE = Profile(
     eval=prompts.EVAL_PROMPT,
     answer_prose=prompts.ANSWER_PROSE_SYSTEM_PROMPT,
     verify_prose=prompts.VERIFY_PROSE_SYSTEM_PROMPT,
+    citation_repair=prompts.CITATION_REPAIR_SYSTEM_PROMPT,
+    structure_repair=prompts.STRUCTURE_REPAIR_SYSTEM_PROMPT,
     verify_verdict=prompts.VERIFY_VERDICT_SYSTEM_PROMPT,
     evidence_ledger=prompts.EVIDENCE_LEDGER_SYSTEM_PROMPT,
     evidence_challenge=prompts.EVIDENCE_CHALLENGE_SYSTEM_PROMPT,
@@ -70,6 +74,8 @@ GENERIC_PROFILE = Profile(
     eval=prompts.GENERIC_EVAL_PROMPT,
     answer_prose=prompts.ANSWER_PROSE_SYSTEM_PROMPT,
     verify_prose=prompts.VERIFY_PROSE_SYSTEM_PROMPT,
+    citation_repair=prompts.CITATION_REPAIR_SYSTEM_PROMPT,
+    structure_repair=prompts.STRUCTURE_REPAIR_SYSTEM_PROMPT,
     verify_verdict=prompts.VERIFY_VERDICT_SYSTEM_PROMPT,
     evidence_ledger=prompts.EVIDENCE_LEDGER_SYSTEM_PROMPT,
     evidence_challenge=prompts.EVIDENCE_CHALLENGE_SYSTEM_PROMPT,

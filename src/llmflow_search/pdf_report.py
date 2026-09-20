@@ -88,6 +88,10 @@ li {{ margin: 3px 0; }}
 a {{ color: #1a5276; text-decoration: underline; }}
 strong {{ color: #333333; {weight_rule} }}
 blockquote {{ border-left: 2pt solid #c7d0d8; margin: 8px 0; padding-left: 10px; color: #5c5c5c; }}
+table {{ width: 100%; margin: 10px 0; border: 0.5pt solid #c7d0d8; -pdf-keep-in-frame-mode: shrink; }}
+th {{ background-color: #eef2f5; color: #333333; font-size: 8pt; text-align: left;
+    padding: 4px 6px; border-bottom: 0.8pt solid #c7d0d8; {heading_weight} }}
+td {{ font-size: 8pt; padding: 4px 6px; border-bottom: 0.5pt solid #e3e8ec; vertical-align: top; }}
 #footer_content {{ font-size: 7.5pt; color: #8a8a8a; border-top: 0.5pt solid #c7d0d8; padding-top: 4px; }}
 """
 

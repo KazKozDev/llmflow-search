@@ -4,6 +4,7 @@ import json
 import re
 
 from . import llm, trace
+from .config import DIAGNOSE_OBSERVATIONS
 from .llm import _json_loads_best_effort
 from .memory import _slug_key
 from .prompts import OBSERVATION_SYSTEM_PROMPT
@@ -282,6 +283,8 @@ def _diagnose_observation_with_model(
     current_step: str,
 ) -> dict:
     fallback = _fallback_observation(tool_name, args, payload, current_step)
+    if not DIAGNOSE_OBSERVATIONS:
+        return fallback
     prompt = f"""QUESTION:
 {question}
 

@@ -19,3 +19,6 @@ dist/
 reports/
 output/
 tmp/
+
+# Serena tool cache
+.serena/

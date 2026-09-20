@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from llmflow_search import agent as agent_module
-from llmflow_search import llm, mcp_client, memory
+from llmflow_search import llm, mcp_client, memory, observations
 from llmflow_search import nodes as nodes_module
 from llmflow_search.config import INSUFFICIENT_EVIDENCE_MESSAGE
 from llmflow_search.graph import build_graph
@@ -2534,6 +2534,9 @@ def test_per_step_model_calls_in_one_batch_actually_overlap(monkeypatch):
         concurrent["now"] -= 1
         return json.dumps({"useful": True, "summary": "read", "reason": "ok"})
 
+    # Per-result diagnosis is off by default (see config.DIAGNOSE_OBSERVATIONS); this
+    # test is about how those calls are dispatched when it is on.
+    monkeypatch.setattr(observations, "DIAGNOSE_OBSERVATIONS", True)
     monkeypatch.setattr(mcp_client, "_call_mcp_tool", fake_call_mcp_tool)
     monkeypatch.setattr(llm, "_ollama_chat_schema", slow_observation)
     monkeypatch.setattr(llm, "_ollama_chat", lambda *a, **k: {"content": ""})
@@ -2571,3 +2574,50 @@ def test_cheap_roles_can_run_on_a_second_model(monkeypatch):
     # Everything that reads evidence or writes an answer stays on the main model.
     for role in ("evidence_ledger", "evidence_challenge", "post_batch", "answer", "verify"):
         assert llm_module.model_for_role("main:cloud", role) == "main:cloud"
+
+
+def test_a_broad_question_reads_the_page_from_the_top():
+    """A question that matches everything selects nothing.
+
+    "LLM news" scores every headline block and teaser strip on a news page, because those
+    are where generic words repeat, and the paragraphs with the names score zero. Selecting
+    by that signal hands the model the parts any page on the site would have, grounding
+    then strips what the excerpt does not carry, and the report comes out as a scrape of
+    headlines with the proper names removed.
+    """
+    from llmflow_search.passages import relevant_excerpt
+
+    story = "Rovers beat United 3-1 at Elland Road on Saturday. "
+    furniture = "News More news Sport Culture Business latest news updates. "
+    page = story + (furniture * 400)
+
+    excerpt = relevant_excerpt(page, "LLM news", 600)
+
+    assert excerpt.startswith("Rovers beat United")
+
+
+def test_a_specific_question_still_finds_its_passage():
+    from llmflow_search.passages import relevant_excerpt
+
+    boilerplate = "Navigation home about contact subscribe newsletter archive. " * 600
+    answer = "The observatory was commissioned in 1886 by the Royal Society."
+    page = boilerplate + answer + " " + boilerplate
+
+    excerpt = relevant_excerpt(page, "When was the observatory commissioned?", 2000)
+
+    assert "commissioned in 1886" in excerpt
+
+
+def test_the_completion_verdict_describes_the_text_that_ships():
+    """The verdict becomes task_complete, so it has to judge the repaired answer.
+
+    Run before the repair passes, it could certify an answer that the repairs then cut a
+    required sentence out of — a completion verdict true of a text nobody will read.
+    """
+    import inspect
+
+    from llmflow_search import answering
+
+    source = inspect.getsource(answering.verify_node)
+    assert source.index("_repair_structure(") < source.index("verify_verdict")
+    assert source.index("_repair_citations(") < source.index("verify_verdict")

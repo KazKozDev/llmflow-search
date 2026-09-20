@@ -181,3 +181,65 @@ def test_jitter_widens_the_interval_so_calls_are_not_metronomic(monkeypatch):
     asyncio.run(run())
 
     assert sleeps == [15.0]  # 10s interval + 50% jitter
+
+
+class _Content:
+    def __init__(self, text):
+        self.text = text
+        self.resource = None
+
+
+class _Result:
+    def __init__(self, content, structured=None, is_error=False):
+        self.content = content
+        self.structuredContent = structured
+        self.isError = is_error
+
+
+def test_scalar_structured_wrapper_does_not_turn_a_payload_into_a_list():
+    """FastMCP answers a ``-> str`` tool twice; the two must stay one result.
+
+    Kept as two parts they were merged into a JSON array, and every consumer that reads a
+    tool result as an object — search memory, source extraction, the trace's search
+    recorder — then silently found nothing in it.
+    """
+    payload = '{"query": "x", "sources": [{"url": "https://a.test"}]}'
+    text = mcp_client._mcp_result_text(
+        _Result([_Content(payload)], structured={"result": payload})
+    )
+    assert json.loads(text)["sources"][0]["url"] == "https://a.test"
+
+
+def test_structured_output_that_differs_from_the_text_block_is_kept():
+    text = mcp_client._mcp_result_text(
+        _Result([_Content('{"a": 1}')], structured={"b": 2})
+    )
+    assert json.loads(text) == [{"a": 1}, {"b": 2}]
+
+
+def test_structured_object_equal_to_the_text_block_is_not_duplicated():
+    text = mcp_client._mcp_result_text(
+        _Result([_Content('{"a": 1, "b": 2}')], structured={"b": 2, "a": 1})
+    )
+    assert json.loads(text) == {"a": 1, "b": 2}
+
+
+def test_a_long_payload_is_deduplicated_too():
+    """The duplicate must be recognized before either copy is truncated.
+
+    Bounding clips the page body inside the payload, and clips the payload inside the
+    ``{"result": ...}`` wrapper at a different point. Comparing the two *after* that
+    concludes they are different values — so the fix held only for pages short enough not
+    to matter, and every real page still arrived as a list with no readable keys.
+    """
+    payload = json.dumps(
+        {"url": "https://a.test", "title": "A", "text": "lorem ipsum " * 3000}
+    )
+    assert len(payload) > 12000
+    text = mcp_client._mcp_result_text(
+        _Result([_Content(payload)], structured={"result": payload})
+    )
+    parsed = json.loads(text)
+    assert isinstance(parsed, dict)
+    assert parsed["url"] == "https://a.test"
+    assert parsed["text"].startswith("lorem ipsum")

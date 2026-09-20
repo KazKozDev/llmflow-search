@@ -24,7 +24,12 @@ Nothing downstream of these functions changes what they returned.
 
 from dataclasses import dataclass, field
 
-from .config import SKIP_CONTROLLER_WHEN_READS_FORCED
+from .config import (
+    AUTO_READ_FOLLOWUP_TOP_K,
+    AUTO_READ_TOP_K,
+    READ_SELECTION,
+    SKIP_CONTROLLER_WHEN_READS_FORCED,
+)
 from .tool_steps import _step_identity
 
 # Tools whose argument is, by definition, a page someone else pointed us at: there is no
@@ -61,10 +66,9 @@ AUTO_READ_DISCOVERY_TOOLS = frozenset(
         "archive_search",
     }
 )
-AUTO_READ_TOP_K = 5
-# Later rounds already hold fetched sources, so they only need enough new pages to test
-# the round's hypothesis, not another full sweep of the catalog.
-AUTO_READ_FOLLOWUP_TOP_K = 3
+# Both sizes are configurable — see config.AUTO_READ_TOP_K. Later rounds already hold
+# fetched sources, so they only need enough new pages to test the round's hypothesis,
+# not another full sweep of the catalog.
 
 
 @dataclass(frozen=True)
@@ -186,6 +190,11 @@ def forced_reads(view: RoundView) -> tuple[list[str], str]:
             "listing_drilldown",
         )
     if view.discovery_just_ran and view.ranked_unread and not view.read_already_queued:
+        # In "model" selection the controller is asked instead, and is shown the same
+        # catalog with each URL's title and snippet. Forcing here would both pre-empt that
+        # choice and, under SKIP_CONTROLLER_WHEN_READS_FORCED, stop it being made at all.
+        if READ_SELECTION == "model" and view.has_read_anything:
+            return [], ""
         reads = _auto_reads(view)
         if reads:
             return reads, "auto_rank"
@@ -252,6 +261,19 @@ def decide(
         steps = list(view.remaining)
         source = "plan"
         reason = "the plan still has steps" if steps else "nothing remains to run"
+
+    # The net that made unconditional reading necessary in the first place: a round that
+    # would end having opened nothing, with pages available to open, opens the best of
+    # them. It applies whoever was supposed to choose — a controller that proposed no read
+    # leaves the run answering from search snippets, which is the failure this exists for.
+    if (
+        effective != "DONE"
+        and not forced
+        and view.ranked_unread
+        and not view.has_read_anything
+        and not any(step.startswith(DISCOVERY_REQUIRED_PREFIXES) for step in steps)
+    ):
+        forced, forced_by = _auto_reads(view), "auto_fallback"
 
     # Forced reads compose on top rather than replacing: a decision to keep searching and
     # a page that must be opened are not in conflict, and reading comes first.

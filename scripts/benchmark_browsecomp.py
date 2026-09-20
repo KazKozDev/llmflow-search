@@ -14,18 +14,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-from datasets import load_dataset
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 # Import LLMFlow-Search graph components
-from llmflow_search import trace
+from llmflow_search import eval_records, trace
+from llmflow_search.config import EVAL_MODEL
 from llmflow_search.graph import build_graph
 from llmflow_search.mcp_client import _tool_schema_list
 from llmflow_search.profiles import select_profile
 from llmflow_search.search_memory import _default_search_memory
 from llmflow_search.sources import _normalize_source_url
 from llmflow_search.state import AgentState
+from llmflow_search.tool_policy import unattended_authorizer
 
 # Import decryption logic from official BrowseComp-Plus codebase
 SYS_PATH_PARENT = Path(__file__).resolve().parent.parent
@@ -40,6 +41,9 @@ except ImportError:
 
     def transform_decrypt(obj: Any, password: str, skip_keys: set[str]) -> Any:
         return obj
+
+
+DEFAULT_MODEL = EVAL_MODEL
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +94,11 @@ def parse_args() -> argparse.Namespace:
 
 def load_browsecomp_questions(sample_size: int, offset: int = 0) -> list[dict]:
     """Load and decrypt BrowseComp-Plus test records."""
+    # Imported here rather than at module scope: ``datasets`` pulls in pyarrow and pandas
+    # for one call, and everything else in this file — and every script that imports it —
+    # works without them. Install it only to run the benchmark: ``uv pip install datasets``.
+    from datasets import load_dataset
+
     print(
         f"Loading BrowseComp-Plus dataset (sample size: {sample_size}, offset: {offset})..."
     )
@@ -149,6 +158,7 @@ async def run_single_query(
     python_bin: str,
     server_script: Path,
     temp_dir: Path,
+    answers_path: Path | None = None,
 ) -> dict[str, Any]:
     query_id = record.get("query_id", "unknown")
     query_text = record.get("query", "")
@@ -193,7 +203,17 @@ async def run_single_query(
                 tools = _tool_schema_list(await session.list_tools())
                 profile = select_profile(t["function"]["name"] for t in tools)
 
-                graph = build_graph(model, tools, mcp_session=session, profile=profile)
+                # A stated policy, not a missing one. With no authorizer the graph
+                # refuses everything above read_only, so the benchmark used to measure an
+                # agent with fewer capabilities than the shipped CLI — no file parsing, no
+                # browser date range — and the difference never appeared in a result.
+                graph = build_graph(
+                    model,
+                    tools,
+                    mcp_session=session,
+                    profile=profile,
+                    tool_authorizer=unattended_authorizer(),
+                )
 
                 state: AgentState = {
                     "task": query_text,
@@ -210,6 +230,7 @@ async def run_single_query(
                     "draft_result": {},
                     "verification_result": {},
                     "evidence_audit": {},
+                    "enforced_gaps": [],
                     "final_answer": "",
                     "iteration": 0,
                     "evidence_round": 0,
@@ -231,6 +252,23 @@ async def run_single_query(
                 evidence_round = final.get("evidence_round", 0)
 
                 eval_metrics = evaluate_answer(answer, ground_truth, gold_urls, sources)
+                if answers_path is not None:
+                    eval_records.write_record(
+                        answers_path,
+                        {
+                            "system": "agent",
+                            "model": model,
+                            "query_id": str(query_id),
+                            "question": query_text,
+                            "ground_truth": ground_truth,
+                            "answer": answer,
+                            "gold_urls": sorted(
+                                _normalize_source_url(url) for url in gold_urls
+                            ),
+                            "elapsed_seconds": round(elapsed, 2),
+                            "sources": eval_records.source_records(sources, query_text),
+                        },
+                    )
                 trace.emit(
                     "query_end",
                     elapsed_seconds=round(elapsed, 2),
@@ -293,7 +331,7 @@ async def run_single_query(
 async def main_async():
     args = parse_args()
 
-    model = args.model or os.environ.get("BROWSECOMP_MODEL") or "qwen3.5:cloud"
+    model = args.model or os.environ.get("BROWSECOMP_MODEL") or DEFAULT_MODEL
     print("=== BrowseComp-Plus Benchmark for LLMFlow-Search ===")
     print(f"Model: {model}")
     print(f"Sample size: {args.sample_size} | Offset: {args.offset}")
@@ -310,13 +348,22 @@ async def main_async():
         args.trace or Path(args.output).with_suffix("").as_posix() + ".trace.jsonl"
     )
     trace.start_run(trace_path)
+    answers_path = eval_records.sidecar_path(trace_path)
+    # The sidecar is appended to, one line per answered question, so a rerun against the
+    # same trace path would leave the previous run's answers underneath this one's. The
+    # scorer and compare_runs.py read the whole file and cannot tell the two apart: the
+    # measurement would silently describe a mixture of two experiments. Start it empty.
+    if answers_path.exists():
+        print(f"Replacing previous answers at {answers_path}")
+        answers_path.unlink()
     print(f"Run trace: {trace_path}")
+    print(f"Answers:   {answers_path}")
 
     results = []
     try:
         for record in records:
             res = await run_single_query(
-                record, model, python_bin, server_script, temp_dir
+                record, model, python_bin, server_script, temp_dir, answers_path
             )
             results.append(res)
     finally:

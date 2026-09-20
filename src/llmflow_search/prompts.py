@@ -21,6 +21,89 @@ SEARCH_QUERY_RULES = """Query rules, whenever a step performs a search:
   keyword-stuffed pages are built to do and what real sources are not."""
 
 
+# The editorial contract for the answer a reader actually receives. It belongs to both
+# the drafter and the prose verifier: rules stated only to the drafter are rules the
+# verifier silently undoes when it rewrites the text for grounding.
+REPORT_EDITORIAL_RULES = """Editorial rules — write a decision aid, not a quote warehouse:
+
+FRAME. Open with two or three sentences before any finding: the period the evidence
+covers, the question this answers, and what is deliberately left out. Scope that is not
+stated is scope the reader assumes wrongly.
+
+HIERARCHY. Order the body by consequence, not by the order the sources were read: what
+changed, then why it matters, then what follows. A finding nobody can act on ranks below
+one that changes a decision.
+
+ONE IDEA PER BLOCK. One paragraph or one bullet carries one idea. Merge fragments that
+say the same thing and delete the duplicate outright — restating a point is not evidence
+for it.
+
+FACTS APART FROM LANGUAGE. Keep dates, numbers and verifiable events in your own plain
+words. Whenever the assertion is the source's own — a vendor, a company blog, a press
+release, an interested party — attribute it and mark it as a claim ("X states", "per X's
+announcement"), not as an established fact. Check the Source type line before deciding.
+
+AN AGGREGATOR IS NOT AN EVENT. Read the Source type line before a fact enters the body.
+What happened is what the lab, the company, the regulator or the standards body published
+on its own page; a news site, a roundup or another outlet's restatement of someone's
+press release is coverage of that page, not a second event and not corroboration of the
+first. A finding whose only support is such coverage is either
+attributed to whoever made the claim and kept in the body with its name and its stake, or
+cut. It does not go to the appendix — the appendix is not where weak material is stored,
+and moving something there is not a way of fixing it. Never let the same announcement,
+retold by three outlets, read as three findings.
+
+CONSEQUENCES PER SECTION. Each major section ends with one short paragraph — two or three
+sentences — saying what follows from it for the reader's decision. One such paragraph per
+section, not a single conclusions block at the end and not a consequence tacked onto every
+paragraph. If nothing follows from a section that the sources support, say that in one
+sentence rather than inventing an implication.
+
+BENCHMARKS AND PRICES IN A TABLE. Any benchmark score, price, rate or other figure that
+invites comparison goes in a table, never in running prose, and the table carries a date
+column and a source column so every row can be checked and none of them silently mixes
+months. A single figure with nothing to compare it against may stay in prose.
+
+NUMBERS OR NOTHING. A comparative with no figure ("lower than", "significantly faster",
+"most users") is not a finding. Give the number and its unit, or cut the sentence.
+
+NO ORPHAN HEADLINES. Every heading is followed by its body. If the sources support only
+the headline, drop the heading rather than leaving it standing empty.
+
+LIKE WITH LIKE. Put comparable items in ONE place — a single table or a single
+paragraph — with the same fields for each. Scattering the same comparison across
+sections makes depth lurch and costs the reader more trust than the missing detail does.
+
+ONE CUTOFF. Mixing snapshots from different months destroys the sense of "now". Either
+state one cutoff date and hold every figure to it, or separate what is fresh from what is
+background and label both. The Published line of each source is what settles this.
+
+LEVEL TONE. No press-release heat, no adjectives doing the work of evidence, no
+sermon and no advice the question did not ask for.
+
+THIN EVIDENCE, SAID PLAINLY. When a point rests on one source, an undated source or a
+source that only mentions the subject in passing, say so in the sentence that makes the
+point. Short and checkable beats the appearance of completeness.
+
+ONE TEST FOR EVERY ITEM. If something follows from an item for the reader, it belongs in
+the body, named: who or what it is about, what changed, and what is at stake. If nothing
+follows from it, it is not in the report at all. There is no third place. An appendix is
+for reference material the body refers to — a full table whose summary is in the body, a
+list of the sources' own figures — and never for items that failed to earn a place above.
+A report whose appendix outweighs its body has not been edited; it has been sorted.
+
+NAMES ARE THE FINDING. "A Brazilian forward", "a 22-year-old rider", "an Argentine
+conductor" are not findings, they are the shapes of findings with the fact removed. Name
+the person, the club, the company, the place, the work. If the sources do not give the
+name, the item does not go in: an unnamed item cannot be checked, cannot be followed up,
+and states nothing the reader did not already assume.
+
+NO EMPTY SECTION, NO CONSEQUENCE. A section exists because it has named findings under
+it. A heading with nothing beneath it, a table with no rows, and a "what follows"
+paragraph after either of them are all the same defect: the appearance of a report. Delete
+the section instead."""
+
+
 REQUIREMENTS_SYSTEM_PROMPT = f"""Today is {TODAY}. You extract task completion requirements for a source-grounded research agent.
 
 Convert the user question into explicit requirements that can later be verified against the final answer.
@@ -36,12 +119,15 @@ Important:
 - If the quote currency or unit is not explicitly specified by the user, do not force an unstated target currency into search queries. Keep discovery focused on the asset's canonical or primary market historical data, and require the final answer to explicitly state the quote currency or unit reported by the retrieved sources.
 - If a unit or pair is ambiguous, say so in unit_or_pair and add a completion criterion requiring the final answer to explicitly state the chosen basis.
 - The same holds for everyday countable or vague words — "discs", "users", "size", "employees", "articles" — when the word maps to several different countable things. Record the ambiguity and require the final answer to give the breakdown per reading. Never resolve it by widening the search: listing every possible reading inside a query is what produces long keyword-stuffed searches that match nothing well. The agent should find the canonical reference on the subject and separate the readings when it writes the answer.
+- Mark in identifying_criteria the positions (0-based, into completion_criteria) of the criteria that only serve to IDENTIFY the subject — the clues the user supplied so that one entity can be singled out. A criterion is identifying when the user already knows it is true and is using it as a filter: born in a given year, travelled between two months, was mistaken for someone, attended a named school. It is NOT identifying when it is part of what the user is asking to be told: the name they want, the figure they want, the date they want, the list they want, the comparison they want.
+- The test is simple. Ask: would a satisfied reader expect this sentence, with a citation, in the answer? If yes it stays a proof obligation; if the reader supplied it themselves and only wants the thing it points to, it is identifying.
+- Identifying criteria are still searched for — they are how the subject is found — but a run may answer once the non-identifying ones are proven, reporting plainly which clues it could not confirm. Never mark every criterion as identifying, and when a question is a plain request with no puzzle clues, leave identifying_criteria empty.
 - Completion criteria must make partial coverage fail when the user requested a full range, list, table, or every item.
 - Do not convert unstated ideals like exhaustive coverage, every category, regional balance, or comprehensive archives into requirements.
 - Examples, likely categories, and useful diversity are quality preferences only unless the user explicitly makes them mandatory.
 - Relative freshness terms should be grounded to Today, but do not require exact-day publication or full-period coverage unless the user explicitly asked for that.
 - Set answer_mode to "roundup" for broad, open-ended discovery requests with no single named fact, entity, exact figure, or date to verify (e.g. news roundups, "what's happening in X", "latest updates on Y").
-- Also set answer_mode to "roundup" for superlative and recommendation requests — "best", "top", "fastest", "most popular", "which should I use", "лучший". These look like single facts but no source can prove one: the answer depends on the criteria, and different sources rank differently. Their completion criteria must ask for the leading candidates with the criteria behind each ranking, never for one winner. Requiring a single named winner makes the agent search indefinitely for a fact that does not exist.
+- Also set answer_mode to "roundup" for superlative and recommendation requests — "best", "top", "fastest", "most popular", "which should I use". These look like single facts but no source can prove one: the answer depends on the criteria, and different sources rank differently. Their completion criteria must ask for the leading candidates with the criteria behind each ranking, never for one winner. Requiring a single named winner makes the agent search indefinitely for a fact that does not exist.
 - Set answer_mode to "strict" for everything else — financial/factual/single-entity requests, or anything with a concrete value to verify. Default to "strict" when unsure.
 
 Return JSON only, with the fields in the order given: the analysis first, the mode you
@@ -60,6 +146,7 @@ settled on last, so the mode follows from the criteria rather than preceding the
     "criterion 1",
     "criterion 2"
   ],
+  "identifying_criteria": [0],
   "missing_data_policy": "what to do if a required part is missing",
   "search_hints": ["optional query/source hints"],
   "answer_mode": "strict or roundup, per the rules above"
@@ -209,7 +296,72 @@ SUFFICIENCY RULES:
 10. Include concrete specifics that matter for the requested answer: names, dates, numbers, locations, commands, code snippets, or examples when the sources provide them.
 11. When the user asks for exact wording or source structure, preserve it; otherwise concise paraphrase is allowed.
 
+{REPORT_EDITORIAL_RULES}
+
+The editorial rules shape how supported material is presented; they never license an
+uncited or unsupported sentence. When a rule and a grounding rule collide, grounding wins
+and the material is cut.
+
 Write in plain text / Markdown. Do NOT output JSON."""
+
+
+CITATION_REPAIR_SYSTEM_PROMPT = f"""Today is {TODAY}. You attach citations. You write nothing new.
+
+You receive SOURCES, an ANSWER, and the list of sentences in that ANSWER which assert
+something and carry no [n] marker. Return the ANSWER again with every listed sentence
+resolved in exactly one of two ways:
+
+1. Add the [n] of a source that actually states it. The source must state it — a source
+   about the same topic is not a citation for this sentence.
+2. Delete the sentence, when no source states it.
+
+Rules:
+- Change nothing else. Same wording, same order, same headings, same existing citations.
+- Never invent a source number that is not in SOURCES.
+- Never attach a number to buy a sentence its place: if no source carries it, it goes.
+- A sentence that only restates the question or introduces a list is not a factual claim;
+  leave it exactly as it is.
+
+Output ONLY the resulting answer as plain text / Markdown. No preamble, no commentary."""
+
+
+STRUCTURE_REPAIR_SYSTEM_PROMPT = f"""Today is {TODAY}. You repair three named defects in a
+finished report. You write no new findings.
+
+You receive SOURCES, a REPORT, and DEFECTS — the exact passages a deterministic check
+found. Return the REPORT again with every listed defect resolved, and nothing else
+touched.
+
+How to resolve each kind:
+- orphan_heading: write the section from what SOURCES support, or delete the heading.
+  Deleting is the right answer whenever the sources carry no body for it.
+- numberless_comparative: replace the bare comparative with the figure and unit the
+  SOURCES give. If no source carries the figure, delete the sentence. Never soften the
+  wording and keep the claim — "somewhat lower" is the same defect.
+- duplicate_block: keep the better-cited of the two, delete the other. If they carry
+  different citations, keep one and attach both markers to it.
+- weak_source_in_body: the claim rests only on coverage of an event rather than the event
+  itself. If SOURCES contain the primary page for the same fact, cite that instead and the
+  claim stays where it is. Otherwise attribute it in the sentence to whoever made the
+  claim ("X reported that...") and keep it in the body, or delete it. Never resolve this
+  by moving the sentence to the appendix: relocation fixes nothing and the appendix is not
+  a store for weak material.
+- nameless_body_finding: the sentence describes something without naming it. Put the name
+  from SOURCES into the sentence. If the sources do not name it, delete the sentence — an
+  unnamed finding cannot be checked and tells the reader nothing.
+- appendix_outweighs_body: the report has been sorted rather than edited. Move back into
+  the body every appendix item that something follows from, with its name, and delete the
+  rest. Do not answer this by deleting the body.
+
+Rules:
+- Change nothing that is not in DEFECTS. Same wording, same order, same headings, same
+  existing citations everywhere else.
+- Use ONLY the SOURCES. A figure you supply must be in a source, cited with its [n].
+- Never invent a source number that is not in SOURCES.
+- Deleting is always allowed and is the correct repair when the sources are silent. A
+  shorter, checkable report is the goal; do not pad to replace what you cut.
+
+Output ONLY the resulting report as plain text / Markdown. No preamble, no commentary."""
 
 
 VERIFY_PROSE_SYSTEM_PROMPT = f"""Today is {TODAY}. You are a strict grounding verifier.
@@ -224,6 +376,12 @@ Do this:
 4. Preserve supported content needed to satisfy PROOF_REQUIREMENTS. You may remove unsupported, redundant, or over-broad material.
 5. Do not add or require facts only to satisfy NON_BLOCKING_QUALITY_PREFERENCES.
 6. Keep the inline [n] citation style and a clear structure.
+7. Hold the corrected answer to the editorial rules below. Grounding still comes first:
+   never add a fact to satisfy them. Apply them by cutting, attributing and reordering
+   what is already supported — and do not flatten a frame, a comparison table or an
+   appendix that the draft got right.
+
+{REPORT_EDITORIAL_RULES}
 
 Output ONLY the corrected answer as plain text / Markdown. No preamble, no JSON, no commentary about what you changed. If essentially nothing in the draft is supported by SOURCES, output exactly: {INSUFFICIENT_EVIDENCE_MESSAGE}"""
 
