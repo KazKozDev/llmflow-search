@@ -434,7 +434,7 @@ def _emit_evidence_admitted(
 _MAX_ENFORCED_GAPS = 40
 
 
-def _remember_enforced_gaps(state: dict, blocked: list[str]) -> list[str]:
+def _remember_enforced_gaps(state: AgentState, blocked: list[str]) -> list[str]:
     """Add this round's indexed objections to the ones the run has already enforced."""
     remembered = [str(gap) for gap in (state.get("enforced_gaps") or []) if str(gap)]
     for gap in blocked:

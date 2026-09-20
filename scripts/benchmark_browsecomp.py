@@ -230,6 +230,7 @@ async def run_single_query(
                     "draft_result": {},
                     "verification_result": {},
                     "evidence_audit": {},
+                    "enforced_gaps": [],
                     "final_answer": "",
                     "iteration": 0,
                     "evidence_round": 0,
